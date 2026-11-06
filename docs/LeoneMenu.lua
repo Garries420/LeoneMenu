@@ -311,6 +311,7 @@ local COMMAND_MODE = {
     NORMAL = 0,
     DD = 1,
 }
+local OFFER_REPLY_SECONDS=3
 
 local VESTER_MODE = { AUTOMATIC = 0, MANUAL = 1 }
 
@@ -355,6 +356,7 @@ local _auto_vest_state = {
     last_vest_recipient_name = "None",
     pending = nil,
     cooldown_until = 0,
+    next_offer_at = 0,
     aim_request = nil,
 }
 
@@ -396,7 +398,7 @@ local function _process_aim_request()
     sampSendChat(string.format('/guard %d 200',request.id))
 end
 
-local function _find_closest_valid_player()
+local function _find_closest_valid_player(attempt)
 
     if _aim_is_held() then
         return nil
@@ -449,8 +451,7 @@ local function _find_closest_valid_player()
                 local player_data = is_valid_player(ped, id)
 
                 if player_data then
-                    local attempt=_auto_vest_state.unconfirmed
-                    if attempt and id==attempt.id and os.clock()<attempt.until_time then
+                    if attempt and id==attempt.id and sampGetPlayerNickname(id)==attempt.name then
                         retry=player_data
                     elseif not closest then
                         closest = player_data
@@ -486,19 +487,24 @@ local function _find_closest_valid_player()
 end
 
 local function _handle_ped_tick()
-    local target = _find_closest_valid_player()
+    local state=_auto_vest_state
+    local now=os.clock()
+    local attempt=state.attempt
+    if now<state.next_offer_at or (attempt and now<attempt.reply_by) then return end
+
+    -- Only consider alternatives once the previous attempt's reply window
+    -- has expired. The original still has to pass the current selection filters.
+    local target = _find_closest_valid_player(attempt)
     if not target then
         return
     end
 
-    _get_active_timer():set_temp_interval(3)
+    _get_active_timer():set_temp_interval(OFFER_REPLY_SECONDS)
 
     local cmd_mode = _config.command_mode.current[0]
     local command = cmd_mode == COMMAND_MODE.NORMAL and "guard" or "guardnear"
 
-    -- If the server does not confirm an offer, give another eligible player
-    -- the next attempt instead of repeatedly selecting the same one.
-    _auto_vest_state.unconfirmed={id=target.player_id,until_time=os.clock()+6}
+    state.attempt={id=target.player_id,name=sampGetPlayerNickname(target.player_id),mode=cmd_mode,reply_by=now+OFFER_REPLY_SECONDS}
     sampSendChat(string.format("/%s %d 200", command, target.player_id))
 end
 
@@ -521,6 +527,8 @@ local function _register_event_handlers()
         end,
         function()
             _auto_vest_state.timers[COMMAND_MODE.NORMAL]:pause()
+            local attempt=_auto_vest_state.attempt
+            if attempt and attempt.mode==COMMAND_MODE.NORMAL then _auto_vest_state.attempt=nil end
             local now=os.clock()
             if not _auto_vest_state.last_job_warning or now-_auto_vest_state.last_job_warning>=5 then
                 _auto_vest_state.last_job_warning=now
@@ -532,22 +540,25 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color, text)
-            if color == Colors.LIGHTBLUE then
-                local player_name = text:match("^%* You offered protection to (.-) for $%d+%.$")
-                if player_name then
-                    return { player_name }
-                end
-            end
-            return false
+        function(_, text)
+            local name=Rules.trim(Rules.strip(text)):match('^%* You offered protection to (.-) for %$%d[%d,]*%.$')
+            return name and {name}
         end,
         function(player_name)
-            _auto_vest_state.unconfirmed=nil
-            _auto_vest_state.last_vest_recipient_name = player_name
-            _auto_vest_state.pending={name=player_name,id=Player:get_player_id_by_name(player_name:gsub(" ","_")),price=200}
+            local state=_auto_vest_state
+            local attempt=state.attempt
+            local raw_name=player_name:gsub(' ','_')
             local timer=_get_active_timer()
+            if attempt and attempt.name:lower()==raw_name:lower() then
+                timer=state.timers[attempt.mode]
+                state.attempt=nil
+            end
+            _auto_vest_state.last_vest_recipient_name = player_name
+            _auto_vest_state.pending={name=player_name,id=Player:get_player_id_by_name(raw_name),price=200}
             timer:trigger()
-            _auto_vest_state.cooldown_until=os.clock()+timer:get_active_interval()
+            local until_time=os.clock()+timer:get_active_interval()
+            state.cooldown_until=until_time
+            state.next_offer_at=math.max(state.next_offer_at,until_time)
         end
     )
 
@@ -564,8 +575,10 @@ local function _register_event_handlers()
         end,
         function(cooldown)
             local seconds=tonumber(cooldown)+2
+            _auto_vest_state.attempt=nil
             _get_active_timer():set_temp_interval(seconds)
             _auto_vest_state.cooldown_until=math.max(_auto_vest_state.cooldown_until,os.clock()+seconds)
+            _auto_vest_state.next_offer_at=math.max(_auto_vest_state.next_offer_at,os.clock()+seconds)
         end
     )
 
@@ -1110,7 +1123,8 @@ local Parachute=require('src.components.Parachute')
 local E={}
 local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),auto_freq=imgui.new.bool(false),last_frequency=0}
 local file='config/Leone Menu/misc-extras.json'
-local state={para_until=0,last_notice=-10,loaded_until=0}
+local STARTUP_NOTICE_SECONDS=8
+local state={para_until=0,last_notice=-10,notice_ready=false}
 function E:register()
     Config.load(file,cfg)
     -- Legacy nonzero last_frequency was recorded only after a real radio reply.
@@ -1137,7 +1151,10 @@ function E:register()
     local para=Overlay.setup_overlay_defaults(true,0.015,0.43,14,8,1,2,true,{0,0,0,0.75},true,{30/255,51/255,72/255,1})
     local loaded=Overlay.setup_overlay_defaults(true,0.015,0.50,17,10,1,6,true,{0.035,0.045,0.06,0.96},true,{30/255,51/255,72/255,1})
     Overlay.new(para,function() return os.clock()<state.para_until end,function(self) self:TextRGB('{FFFFFF}Parachute\navailable') end)
-    Overlay.new(loaded,function() return os.clock()<state.loaded_until end,function(self)
+    Overlay.new(loaded,function()
+        return state.notice_ready and (not state.loaded_until or os.clock()<state.loaded_until)
+    end,function(self)
+        state.loaded_until=state.loaded_until or os.clock()+STARTUP_NOTICE_SECONDS
         self:TextRGB('{FFFFFF}Leone Menu')
         imgui.PushFont(nil,13)
         imgui.Text('Version '..require('src.core.Updates').version)
@@ -1152,7 +1169,7 @@ local function startup_ready()
         and not sampIsDialogActive() and not isPauseMenuActive()
 end
 function E:can_update()
-    return state.loaded_until>0 and os.clock()>=state.loaded_until and startup_ready() and not sampIsChatInputActive()
+    return state.loaded_until~=nil and os.clock()>=state.loaded_until and startup_ready() and not sampIsChatInputActive()
 end
 function E:stop_startup_audio()
     local stream=state.audio
@@ -1166,7 +1183,8 @@ function E:loaded()
         while not startup_ready() do wait(100) end
         local ok,err=pcall(require('src.components.Fixes').preload_animations)
         if not ok then print('[Leone Menu] Animation preload failed: '..tostring(err)) end
-        Frequency:loaded();state.loaded_until=os.clock()+8
+        Frequency:loaded()
+        state.notice_ready=true
         local ok,stream=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/modloadedin.mp3')
         if ok and stream and stream~=0 then
             state.audio=stream
@@ -1206,6 +1224,7 @@ local fa=require('fAwesome7')
 local Config=require('src.core.Config')
 local MainWindow=require('src.ui.MainWindow')
 local Player=require('src.utils.Player')
+local Rules=require('src.core.Rules')
 local shared=require('src.shared')
 local Timer=require('src.core.Timer')
 local H=require('src.ui.Helpers')
@@ -1217,9 +1236,13 @@ local F={}
 local function announce()
     msg(string.format('AutoFind: {6DFB6D}ON{FFFFFF} -> %s (%d) | Level: {6DFB6D}%d{FFFFFF} | Ping: {6DFB6D}%d',cfg.looking_after:gsub('_',' '),state.id,sampGetPlayerScore(state.id),sampGetPlayerPing(state.id)))
 end
-local function stop()
+local function stop(job_denied)
     state.enabled=false;state.next_lookup=nil;state.resume_at=nil
-    msg('AutoFind: {FF0000}OFF')
+    if job_denied then
+        sampAddChatMessage("[Leone Menu] {FFFFFF}Auto Find turned {FF0000}off{FFFFFF}, you're not a {00FF00}detective{FFFFFF}, go to {00FF00}LSPD HQ{FFFFFF} and get the job",0xFF1E3348)
+    else
+        msg('AutoFind: {FF0000}OFF')
+    end
 end
 local function send_if_ready()
     if state.resume_at and os.clock()<state.resume_at then return end
@@ -1284,6 +1307,9 @@ function F:register()
     shared.event_handler:register('PLAYER_JOIN',function(_,_,_,name)
         return state.enabled and state.next_lookup and name==cfg.looking_after
     end,function() state.next_lookup=0 end)
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
+        return state.enabled and Rules.trim(Rules.strip(text))=='You are not a detective.'
+    end,function() stop(true);return false end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)
         return state.enabled and (text=='You are unable to find this person.' or text=="You can't find that person as they're hidden in one of their turfs." or text=='You have already searched for someone - wait a little.')
     end,function() timer:set_temp_interval(math.max(state.has_sent and timer:time_remaining()or 0,5));state.has_sent=true end)
@@ -1717,6 +1743,7 @@ local commands={defend='al',free='afree'}
 local last_targets,active={},{}
 local pending,wanted,last_mode
 local cooldown_until=0
+local attempted_until=0
 
 local function plain_name(name) return Rules.trim(name):gsub('_',' ') end
 local function notify(text) sampAddChatMessage('[Leone Mods] {FFFFFF}'..text,0xFF1E3348) end
@@ -1759,6 +1786,7 @@ end
 local function send(mode,target,hotkey)
     local seconds=cooldown()
     cooldown_until=os.clock()+seconds
+    attempted_until=os.clock()+10
     last_mode=mode
     pending=hotkey and {mode=mode,target=target,seconds=seconds,expires=os.clock()+10} or nil
     sampSendChat(('/%s %d%s'):format(mode,target.id,mode=='defend' and ' 200' or ''))
@@ -1799,6 +1827,14 @@ local function nearest(mode)
 end
 
 local function handle_chat(text)
+    if (text=='You are not a Lawyer!' and (next(active) or wanted or os.clock()<attempted_until))
+        or (wanted and os.clock()<=wanted.expires and text=="You're not a Lawyer / Cop / FBI!") then
+        active={}
+        pending,wanted=nil,nil
+        attempted_until,cooldown_until=0,0
+        msg("You're not a {00FF00}lawyer{FFFFFF}, go get the job at {00FF00}Downtown Los Santos")
+        return false
+    end
     if wanted and os.clock()<=wanted.expires then
         if text=='__________WANTED LIST__________' then
             wanted.suspects={}
@@ -1815,7 +1851,7 @@ local function handle_chat(text)
     if not pending or os.clock()>pending.expires then return end
     local name
     if pending.mode=='defend' then
-        name=text:match('^%* You offered to defend (.-) for %$200%.$')
+        name=text:match('^%* You offered to defend (.-) for %$%d[%d,]*%.$')
     else
         name=text:match('^%*?%s*You have reduced (.-)\'s sentence by ')
             or text:match('^%*?%s*You have reduced (.-)\'s jail time by ')
@@ -1843,8 +1879,12 @@ function Lawyer:register()
         shared.hotkey_manager:register('lawyer_'..bound,cfg[bound].keys,function() nearest(bound) end)
     end
     shared.event_handler:register('SERVER_MESSAGE',function(_,text)
-        return (wanted or pending) and {Rules.trim(Rules.strip(text))}
+        return (wanted or pending or next(active) or os.clock()<attempted_until) and {Rules.trim(Rules.strip(text))}
     end,handle_chat)
+    shared.event_handler:register('SEND_COMMAND',function(command)
+        local name=command:match('^/(%S+)')
+        return name and (name:lower()=='defend' or name:lower()=='free')
+    end,function() attempted_until=os.clock()+10 end)
     shared.event_handler:register('PED_TICK',function() return next(active)~=nil or wanted~=nil or pending~=nil end,function()
         local now=os.clock()
         if wanted and now>wanted.expires then wanted=nil;notify('Could not read the HZG wanted list.') end
@@ -5152,7 +5192,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.2',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.3',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5226,6 +5266,7 @@ function U.start(can_update)
     if parsed and parsed.version>=U.alliance.version then U.alliance=parsed end
     lua_thread.create(function()
         while not can_update() do wait(100) end
+        print('[Leone Menu] Startup notice finished. Checking for updates.')
         U.check_menu(false);U.check_skins(false)
         while true do wait(3600000);U.check_skins(false) end
     end)
@@ -5240,7 +5281,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.2")
+script_version("1.0.3")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -9096,7 +9137,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.2", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.3", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
