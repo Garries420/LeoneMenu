@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.0")
+script_version("1.0.1")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -566,20 +566,30 @@ function main()
 
     shared.event_handler:process("onScriptInit")
 
-    require("src.core.Updates").start()
     Extras:loaded()
+    local Updates=require("src.core.Updates")
+    Updates.start(function() return Extras:can_update() end)
     msg("Leone Menu loaded. Use {1E3348}/leone{FFFFFF}.")
 
+    local function can_reload(reason)
+        return reason~='update' or (Extras:can_update() and not Updates.busy and not Updates.skins_busy)
+    end
     local last_save=os.time()
     while true do
-        if Home.reload_requested then
-            print('Leone Menu reload requested. Closing the menu.')
+        local reload=Home.reload_requested
+        if reload and can_reload(reload) then
             require('src.ui.MainWindow'):hide()
             wait(0) -- Let the render and input callbacks finish before teardown.
-            imgui.ShutdownRenderer()
-            print('Renderer closed. Reloading Leone Menu.')
-            thisScript():reload()
-            return
+            if can_reload(reload) then
+                print('Leone Menu reload requested. Releasing the menu renderer.')
+                Extras:stop_startup_audio()
+                save_config()
+                imgui.ShutdownRenderer()
+                if reload=='update' then msg(Updates.status..'. Reloading...') end
+                print('Renderer closed. Reloading Leone Menu.')
+                thisScript():reload()
+                return
+            end
         end
         if os.time()-last_save>=30 then save_config();last_save=os.time() end
         shared.hotkey_manager:update()

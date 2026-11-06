@@ -11,7 +11,7 @@ local Parachute=require('src.components.Parachute')
 local E={}
 local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),auto_freq=imgui.new.bool(false),last_frequency=0}
 local file='config/Leone Menu/misc-extras.json'
-local state={para_until=0,last_notice=-10,loaded_until=0,initialized=false}
+local state={para_until=0,last_notice=-10,loaded_until=0}
 function E:register()
     Config.load(file,cfg)
     -- Legacy nonzero last_frequency was recorded only after a real radio reply.
@@ -44,13 +44,37 @@ function E:register()
         imgui.Text('Version '..require('src.core.Updates').version)
         imgui.PopFont()
     end)
+    addEventHandler('onScriptTerminate',function(scr)
+        if scr==script.this then self:stop_startup_audio() end
+    end)
+end
+local function startup_ready()
+    return doesCharExist(PLAYER_PED) and sampIsLocalPlayerSpawned() and sampGetGamestate()==3
+        and not sampIsDialogActive() and not isPauseMenuActive()
+end
+function E:can_update()
+    return state.loaded_until>0 and os.clock()>=state.loaded_until and startup_ready() and not sampIsChatInputActive()
+end
+function E:stop_startup_audio()
+    local stream=state.audio
+    state.audio=nil
+    if stream then releaseAudioStream(stream) end
 end
 function E:loaded()
     lua_thread.create(function()
-        while not doesCharExist(PLAYER_PED) or not sampIsLocalPlayerSpawned() or sampGetGamestate()~=3 or sampIsDialogActive() do wait(100) end
-        wait(1000);state.initialized=true;Frequency:loaded();state.loaded_until=os.clock()+8
+        while not startup_ready() do wait(100) end
+        wait(1000)
+        while not startup_ready() do wait(100) end
+        local ok,err=pcall(require('src.components.Fixes').preload_animations)
+        if not ok then print('[Leone Menu] Animation preload failed: '..tostring(err)) end
+        Frequency:loaded();state.loaded_until=os.clock()+8
         local ok,stream=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/modloadedin.mp3')
-        if ok and stream and stream~=0 then setAudioStreamState(stream,1);wait(15000);releaseAudioStream(stream) end
+        if ok and stream and stream~=0 then
+            state.audio=stream
+            setAudioStreamState(stream,1)
+            wait(15000)
+            self:stop_startup_audio()
+        end
     end)
 end
 function E:get_config() return cfg end

@@ -2,7 +2,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.1',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -49,8 +49,7 @@ local function install(manifest)
         ok=Config.write(target,res.text)
         if not ok then U.status='Could not replace script; current menu kept';return end
         U.status='Installed Leone Menu '..manifest.version
-        msg('Updated Leone Menu to {1E3348}'..manifest.version..'{FFFFFF}. Reloading...')
-        require('src.components.Home').reload_requested=true
+        require('src.components.Home').reload_requested='update'
     end):catch(function() U.status='Update download failed; current menu kept' end):finally(function() U.busy=false end)
 end
 function U.check_menu(manual)
@@ -68,14 +67,17 @@ function U.check_menu(manual)
         if manual then msg(U.status) end
     end):catch(function() U.status='Could not check updates; menu works offline';U.busy=false end)
 end
-function U.start()
+function U.start(can_update)
     local bundled=Config.read('resource/Leone Menu/alliance-skins.html')
     local fallback=bundled and R.alliance(bundled)
     if fallback and fallback.version>=U.alliance.version then U.alliance=fallback end
     local saved=Config.read(cache)
     local parsed=saved and R.alliance(saved)
     if parsed and parsed.version>=U.alliance.version then U.alliance=parsed end
-    U.check_menu(false);U.check_skins(false)
-    lua_thread.create(function() while true do wait(3600000);U.check_skins(false) end end)
+    lua_thread.create(function()
+        while not can_update() do wait(100) end
+        U.check_menu(false);U.check_skins(false)
+        while true do wait(3600000);U.check_skins(false) end
+    end)
 end
 return U

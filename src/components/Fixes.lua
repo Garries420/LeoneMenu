@@ -54,7 +54,13 @@ end
 local function _preload_animations()
     ffi.cdef [[
         typedef void (__cdecl *AddAnimBlockRef_t)(int index);
+        unsigned long __stdcall GetEnvironmentVariableA(const char*,char*,unsigned long);
+        int __stdcall SetEnvironmentVariableA(const char*,const char*);
     ]]
+    -- Model references live for the GTA process, across Lua script reloads.
+    local kernel=ffi.load('kernel32')
+    local preload_marker='LEONE_MENU_ANIMATION_REFS'
+    if kernel.GetEnvironmentVariableA(preload_marker,nil,0)>0 then return end
 
     local AddAnimBlockRef = ffi.cast("AddAnimBlockRef_t", 0x4D3FB0)
     local animBlocksIdStart = memory.read(0x48C36B + 2, 4, true)
@@ -67,6 +73,7 @@ local function _preload_animations()
     end
 
     loadAllModelsNow()
+    kernel.SetEnvironmentVariableA(preload_marker,'1')
 end
 
 local function _register_event_handlers()
@@ -95,8 +102,9 @@ function Fixes:register()
     _apply_framerate_fixes()
     _apply_general_fixes()
 
-    _preload_animations()
     _register_event_handlers()
 end
+
+Fixes.preload_animations=_preload_animations
 
 return Fixes
