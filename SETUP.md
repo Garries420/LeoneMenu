@@ -1,24 +1,22 @@
-# Leone Menu release feed
+# Leone Menu updates
 
-The repository is private. The tester ZIP contains the installed MoonLoader
-files and a short readme. The `leone-updates` branch holds only the three updater
-files and `.nojekyll`.
+GitHub Pages serves the files in `main` under `/docs`. In Settings → Pages,
+choose **Deploy from a branch**, then **main** and **/docs**. The feed is
+available at https://garries420.github.io/LeoneMenu/ after deployment.
 
-For automatic downloads, enable GitHub Pages under Settings > Pages. Choose
-Deploy from a branch, select `leone-updates`, and select `/(root)`. This makes the
-files in that branch publicly readable and keeps the repository private.
-GitHub Pages on a private personal repository requires GitHub Pro.
-The feed address is https://garries420.github.io/LeoneMenu/.
+## Update alliance skins
 
-For a skin-list update, edit only `alliance-skins.html` on `leone-updates`. Change
-the IDs and increment `leone-skins-version`. Installed menus check on startup,
-on reload, manually from Home, and hourly. A menu release is unnecessary.
+Edit `docs/alliance-skins.html` on `main`. Update the IDs and increment
+`leone-skins-version`. Leone Menu checks for skin updates on startup, on
+reload, hourly, and when a player clicks **Check for updates** on Home.
 
-For a menu update, advance the Lua and package versions and run the build and
-validation tools. Commit the generated `LeoneMenu.lua` and `leone-update.json`
-together on `leone-updates`. Runtime protocol 5 allows a Lua-only update. A
-change to bundled libraries or assets requires a new protocol and a full ZIP.
+## Update the menu
 
-On failure the updater retains the installed menu or saved skin list. For a
-manual menu rollback, close GTA and copy
+Advance the version in the Lua and release metadata, run the build and
+validation tools, and commit the generated `LeoneMenu.lua` and
+`leone-update.json` together under `docs/`. A Lua-only update uses the
+current runtime protocol. Changes to bundled libraries or assets require a
+new runtime protocol and a full ZIP.
+
+If you need to restore the previous script, close GTA and copy
 `moonloader/config/Leone Menu/LeoneMenu.previous.lua` over `moonloader/LeoneMenu.lua`.
