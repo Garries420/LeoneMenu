@@ -1,6 +1,5 @@
 -- LEONE_MENU_BUNDLE
 -- Leone Menu is built on Sputnik by Kev and Futurestunt. Modified by Garry.
--- Original supplied source is preserved in the development workspace.
 package.preload['upmimgui'] = function() return require('leone.upmimgui') end
 
 package.preload['src.components.AcceptVest'] = function()
@@ -762,15 +761,16 @@ function Backup:register()
         else
             place=special and special.name or 'Interior'
         end
-        local suffix=''
+        local wanted, ending = "", ""
         if _config.wanted[0] then
             -- MoonLoader opcode 01C0 returns a result flag before the level.
-            local _,stars=storeWantedLevel(PLAYER_HANDLE)
-            if type(stars)=='number' and stars>=1 and stars<=6 and stars%1==0 then
-                suffix=" I'm wanted with "..stars..(stars==1 and ' star' or ' stars')
+            local _, stars = storeWantedLevel(PLAYER_HANDLE)
+            if type(stars) == "number" and stars >= 1 and stars <= 6 and stars % 1 == 0 then
+                wanted = ("Wanted with %d %s! "):format(stars, stars == 1 and "charge" or "charges")
+                ending = "!"
             end
         end
-        sampSendChat('/pr I need urgent backup! Currently at '..place..'!'..suffix)
+        sampSendChat("/pr I need urgent backup, " .. wanted .. "Currently at " .. place .. ending)
     end)
     MainWindow:add_page("backup", {
         icon = fa("BULLHORN"),
@@ -1508,7 +1508,7 @@ local Home={reload_requested=false}
 function Home:register()
     MainWindow:add_page('home',{title='Home',icon=fa('HOUSE'),order=0,render_function=function()
         imgui.Heading('Leone Menu')
-        imgui.Text('Version '..U.version)
+        imgui.Text('Leone Menu V'..U.version)
         imgui.DrawChild('Credits',function()
             imgui.TextWrapped('Built on Sputnik, created by Kev and Futurestunt. Thank you for the original menu and its systems.')
             if imgui.AnimButton('Kev - forum profile') then H.open('https://forums.hzgaming.net/member.php/49614-Kev') end
@@ -1525,6 +1525,8 @@ function Home:register()
         if imgui.AnimButton('Check for updates') then U.check_menu(true);U.check_skins(true) end
         imgui.TextWrapped(U.status)
         imgui.TextWrapped(U.skins_status)
+        imgui.Text('Version Date: '..(U.alliance.date or 'Unavailable'))
+        if imgui.IsItemHovered() then imgui.SetTooltip('Day/Month/year - Swedish Timezone') end
     end})
     MainWindow:select_page('home')
 end
@@ -3711,28 +3713,11 @@ local function merge(target, data)
         elseif old==nil or type(old)==type(v) then target[k]=v end
     end
 end
-function Config.path(p)
-    if p:match('^%a:[/\\]') then return p end
-    return getWorkingDirectory() .. '/' .. p
-end
-function Config.write(path, text)
-    path=Config.path(path)
-    local tmp=path..'.tmp'
-    local f,err=io.open(tmp,'wb'); if not f then return false,err end
-    local ok,why=f:write(text); f:close()
-    if not ok then return false,why end
-    local check=io.open(tmp,'rb'); if not check then return false,'Cannot verify temporary file' end
-    local same=check:read('*a')==text; check:close()
-    if not same then return false,'Temporary file differs' end
-    -- Windows atomic replacement with write-through; old file remains intact on failure.
-    pcall(ffi.cdef,'int __stdcall MoveFileExA(const char*,const char*,unsigned long);')
-    if ffi.load('kernel32').MoveFileExA(tmp,path,9)==0 then return false,'Atomic replacement failed' end
-    return true
-end
-function Config.read(path)
-    local f=io.open(Config.path(path),'rb'); if not f then return nil end
-    local s=f:read('*a');f:close();return s
-end
+local Files=require('src.utils.UpdateFiles')
+Config.path=Files.path
+Config.read=Files.read
+Config.write=Files.write
+
 function Config.save(path, settings)
     local ok,data=pcall(function() return json.encode(encode_value(settings),{indent=true}) end)
     if not ok then return false,data end
@@ -4337,6 +4322,73 @@ return HotkeyManager
 
 end
 
+package.preload['src.core.Package'] = function()
+local Files=require('src.utils.UpdateFiles')
+local open_browser=require('src.utils.Browser')
+local Package={}
+
+local release_url='https://github.com/Garries420/LeoneMenu/releases/latest'
+local title='Leone Menu - Required update'
+local body=table.concat({
+    '{FF3333}CLOSE GTA BEFORE INSTALLING',
+    '',
+    '{FFFFFF}This version needs updated Leone Menu files.',
+    '{FFFF55}Download the latest RAR from GitHub.',
+    '{FFFFFF}Close GTA completely. Extract the moonloader folder into',
+    'your GTA folder and choose Replace when asked.',
+    '',
+    'Press OK to open the release page in your browser.'
+},'\n')
+
+function Package.check(files)
+    for path,digest in pairs(files) do
+        local data=Files.read(path)
+        if not data or Files.sha256(data)~=digest then return false,path end
+    end
+    return true
+end
+
+function Package.recover(version,fingerprint,path)
+    script_name('Leone Menu')
+    script_version(version)
+    script_authors('Kev','Futurestunt','Garry')
+    print('[Leone Menu] Required package file is missing or differs: '..path)
+
+    function main()
+        while not isSampAvailable() do wait(0) end
+        local directory='config/Leone Menu'
+        for _,folder in ipairs({'config',directory}) do
+            local absolute=Files.path(folder)
+            if not doesDirectoryExist(absolute) then createDirectory(absolute) end
+        end
+        local function show_link()
+            sampAddChatMessage('{1E3348}[Leone Menu] {FFFFFF}Full package required. Close GTA before installing. '..release_url,-1)
+        end
+        local function open_release()
+            local ok,opened=pcall(open_browser,release_url)
+            if not ok or not opened then show_link() end
+        end
+        sampRegisterChatCommand('leone',open_release)
+        local acknowledgement=directory..'/package-warning-'..fingerprint..'.txt'
+        if Files.read(acknowledgement)~='acknowledged\n' then
+            while not sampIsLocalPlayerSpawned() or not doesCharExist(PLAYER_PED) or isCharInAnyCar(PLAYER_PED) do wait(250) end
+            local Dialogs=require('src.ui.Dialogs')
+            Dialogs.start(true)
+            Dialogs.show(title,body,0,'OK',function()
+                Files.write(acknowledgement,'acknowledged\n')
+                open_release()
+            end,true)
+        else
+            show_link()
+        end
+        wait(-1)
+    end
+end
+
+return Package
+
+end
+
 package.preload['src.core.Rules'] = function()
 -- Pure parsing/selection rules shared by runtime and local tests.
 local R={}
@@ -4358,7 +4410,9 @@ function R.alliance(html)
     local ids=html:match('<pre%s+id="alliance%-skins">%s*([^<]+)</pre>')
     local skins=ids and R.skins(R.trim(ids))
     if not version or not skins then return nil end
-    return {version=version,skins=skins}
+    local date=html:match('<meta%s+name="leone%-skins%-date"%s+content="([^"]+)"%s*/?>')
+    if date and not date:match('^%d%d/%d%d/%d%d%d%d %d%d:%d%d[AP]M CES?T$') then return nil end
+    return {version=version,skins=skins,date=date}
 end
 function R.frequency(text)
     text=R.strip(text)
@@ -4794,48 +4848,38 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local ffi=require('ffi')
-local U={version='1.0.0-test.16',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
 local initial={132,137,209,212,230,236,107,195,270,269,271,106,293,0,68,200,62,221,229,214,127,124,24,164,202,66,234,235,261,272,43,91,2,291,93,101,233,126,211}
 U.alliance={version=2,skins=initial}
-function U.sha256(text)
-    pcall(ffi.cdef,[[
-        int __stdcall CryptAcquireContextA(uintptr_t*,const char*,const char*,unsigned long,unsigned long);
-        int __stdcall CryptCreateHash(uintptr_t,unsigned int,uintptr_t,unsigned long,uintptr_t*);
-        int __stdcall CryptHashData(uintptr_t,const unsigned char*,unsigned long,unsigned long);
-        int __stdcall CryptGetHashParam(uintptr_t,unsigned long,unsigned char*,unsigned long*,unsigned long);
-        int __stdcall CryptDestroyHash(uintptr_t);
-        int __stdcall CryptReleaseContext(uintptr_t,unsigned long);
-    ]])
-    local a=ffi.load('advapi32');local ctx=ffi.new('uintptr_t[1]');local hash=ffi.new('uintptr_t[1]')
-    if a.CryptAcquireContextA(ctx,nil,nil,24,0xF0000000)==0 then return nil end
-    if a.CryptCreateHash(ctx[0],0x800c,0,0,hash)==0 then a.CryptReleaseContext(ctx[0],0);return nil end
-    local digest=ffi.new('unsigned char[32]');local size=ffi.new('unsigned long[1]',32)
-    local ok=a.CryptHashData(hash[0],ffi.cast('const unsigned char*',text),#text,0)~=0 and a.CryptGetHashParam(hash[0],2,digest,size,0)~=0
-    a.CryptDestroyHash(hash[0]);a.CryptReleaseContext(ctx[0],0)
-    if not ok then return nil end
-    local out={};for i=0,31 do out[#out+1]=string.format('%02x',digest[i]) end
-    return table.concat(out)
-end
+U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end
 function U.check_skins(manual)
     if U.skins_busy then return end
     U.skins_busy=true
     U.skins_status='Checking alliance skins...'
-    Http:new('GET',base..'alliance-skins.html',nil,20):then_(function(res)
-        local parsed=res.status_code==200 and R.alliance(res.text)
-        if not parsed then
-            U.skins_status='Using saved alliance skins (revision '..U.alliance.version..')'
-        elseif parsed.version>U.alliance.version then
-            local ok=Config.write(cache,res.text)
-            if ok then U.alliance=parsed;U.skins_status='Alliance skins updated to revision '..parsed.version
-            else U.skins_status='Could not save skin update; previous list retained' end
-        else U.skins_status='Alliance skins are current (revision '..U.alliance.version..')' end
+    local function finish(status)
+        U.skins_status=status
+        U.skins_busy=false
         if manual then msg(U.skins_status) end
-    end):catch(function() U.skins_status='Using saved alliance skins (revision '..U.alliance.version..')' end):finally(function() U.skins_busy=false end)
+    end
+    local function unavailable() finish('Using the last available alliance skin list') end
+    Http:new('GET',base..'skins/latest.json',nil,20):then_(function(res)
+        local m=res.status_code==200 and json.decode(res.text)
+        if type(m)~='table' or type(m.version)~='number' or m.version%1~=0 or type(m.path)~='string'
+            or not m.path:match('^skins/alliance%-skins%-%d%d%d%d%-%d%d%-%d%d_%d%d%-%d%d%-%d%d_CES?T%.html$')
+            or type(m.sha256)~='string' or #m.sha256~=64 or not m.sha256:match('^%x+$') then return unavailable() end
+        if m.version<=U.alliance.version and U.alliance.date then return finish('Alliance skins are current') end
+        Http:new('GET',base..m.path,nil,20):then_(function(page)
+            local parsed=page.status_code==200 and U.sha256(page.text)==m.sha256:lower() and R.alliance(page.text)
+            if not parsed or not parsed.date or parsed.version~=m.version or parsed.version<U.alliance.version then return unavailable() end
+            if not Config.write(cache,page.text) then return finish('Could not save skin update; previous list retained') end
+            U.alliance=parsed
+            finish('Alliance skins updated')
+        end):catch(unavailable)
+    end):catch(unavailable)
 end
 local function install(manifest)
     U.status='Downloading version '..manifest.version
@@ -4866,12 +4910,14 @@ function U.check_menu(manual)
             or not m.sha256:match('^%x+$') or #m.sha256~=64 or m.url~=menu_url then
             U.status='Could not verify the update feed; keeping '..U.version;U.busy=false
         elseif not R.newer(m.version,U.version) then U.status='Leone Menu is up to date ('..U.version..')';U.busy=false
-        elseif m.runtime~=U.runtime then U.status='New package required: '..m.version;U.busy=false
         else install(m) end
         if manual then msg(U.status) end
     end):catch(function() U.status='Could not check updates; menu works offline';U.busy=false end)
 end
 function U.start()
+    local bundled=Config.read('resource/Leone Menu/alliance-skins.html')
+    local fallback=bundled and R.alliance(bundled)
+    if fallback and fallback.version>=U.alliance.version then U.alliance=fallback end
     local saved=Config.read(cache)
     local parsed=saved and R.alliance(saved)
     if parsed and parsed.version>=U.alliance.version then U.alliance=parsed end
@@ -4888,7 +4934,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.0-test.16")
+script_version("1.0.0")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5856,13 +5902,24 @@ end
 
 package.preload['src.ui.Dialogs'] = function()
 -- Client-only SA-MP dialogs. Never submits a locally-owned dialog to HZG.
-local shared=require('src.shared')
 local D={queue={},active=nil,id=32760}
 function D.show(title,text,style,button,callback,required,eligible)
     D.queue[#D.queue+1]={title=title,text=text,style=style,button=button,callback=callback,required=required,eligible=eligible}
 end
-function D.start()
-    shared.event_handler:register('SEND_DIALOG_RESPONSE',function(id) return id==D.id end,function() return false end)
+function D.start(recovery)
+    if recovery then
+        -- RPC 62 is DialogResponse. This path works before loading SAMP.Lua.
+        addEventHandler('onSendRpc',function(id,stream)
+            if id~=62 then return end
+            local offset=raknetBitStreamGetReadOffset(stream)
+            raknetBitStreamSetReadOffset(stream,0)
+            local dialog_id=raknetBitStreamReadInt16(stream)
+            raknetBitStreamSetReadOffset(stream,offset)
+            if dialog_id==D.id then return false end
+        end)
+    else
+        require('src.shared').event_handler:register('SEND_DIALOG_RESPONSE',function(id) return id==D.id end,function() return false end)
+    end
     lua_thread.create(function()
         while true do
             if not D.active and #D.queue>0 and not sampIsDialogActive() then
@@ -5912,11 +5969,7 @@ function H.position(configs,prefix)
         end
     end)
 end
-function H.open(url)
-    local ffi=require('ffi')
-    pcall(ffi.cdef,'void* __stdcall ShellExecuteA(void*,const char*,const char*,const char*,const char*,int);')
-    ffi.load('shell32').ShellExecuteA(nil,'open',url,nil,nil,1)
-end
+H.open=require('src.utils.Browser')
 function H.input(label,value,hint,width,len)
     return imgui.StyledInputText(label,value,hint,imgui.ImVec2(width or 250,0),len or 256)
 end
@@ -5937,6 +5990,12 @@ local WINDOW = {
     SIDEBAR_WIDTH = 12,
     FLAGS = imgui.WindowFlags.NoCollapse + imgui.WindowFlags.NoTitleBar + imgui.WindowFlags.NoResize,
 }
+
+-- Crop the nearly transparent top and bottom rows of leone-logo.png in place.
+-- A matching change to the drawn height keeps the icon and title at their original scale.
+local LOGO_TOP = 96 / 1312
+local LOGO_BOTTOM = 1176 / 1312
+local LOGO_HEIGHT_RATIO = LOGO_BOTTOM - LOGO_TOP
 
 local _main_window = {
     is_open = imgui.new.bool(false),
@@ -5985,34 +6044,34 @@ local function _select_page(id,anchor)
     if anchor and page.prepare_search then page.prepare_search() end
 end
 
-local function _render_sidebar()
-    local window_padding = imgui.GetStyle().WindowPadding
+local function _render_sidebar(sidebar_width, content_width)
+    local style = imgui.GetStyle()
+    local window_padding = style.WindowPadding
 
     imgui.BeginChild(
         "sidebar_area",
-        imgui.ImVec2(imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH), 0),
+        imgui.ImVec2(sidebar_width, 0),
         false,
         imgui.WindowFlags.NoScrollbar
     )
 
-    imgui.SetCursorPosY(window_padding.y)
-    local width=imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH)-window_padding.x*2
+    imgui.SetCursorPosY(window_padding.y / 2)
     if not _main_window.logo_tried then
         _main_window.logo_tried=true
         local ok,texture=pcall(imgui.CreateTextureFromFile,getWorkingDirectory()..'/resource/Leone Menu/leone-logo.png')
         if ok then _main_window.logo=texture end
     end
     if _main_window.logo then
-        local size=width
-        imgui.SetCursorPosX((imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH)-size)/2)
-        imgui.Image(_main_window.logo,imgui.ImVec2(size,size))
+        imgui.SetCursorPosX(window_padding.x)
+        imgui.Image(_main_window.logo, imgui.ImVec2(content_width, content_width * LOGO_HEIGHT_RATIO),
+            imgui.ImVec2(0, LOGO_TOP), imgui.ImVec2(1, LOGO_BOTTOM))
     else
         imgui.TextColored(imgui.ImVec4(30/255,51/255,72/255,1),'Leone Menu')
     end
     imgui.SetCursorPosX(window_padding.x)
     local clear_width=_main_window.query~='' and imgui.GetFrameHeight()+imgui.GetStyle().ItemSpacing.x or 0
     _main_window.query=imgui.StyledInputText('##settings_search'.._main_window.search_id,_main_window.query,'Search settings',
-        imgui.ImVec2(width-clear_width,0),128)
+        imgui.ImVec2(content_width-clear_width,0),128)
     if clear_width>0 then
         imgui.SameLine()
         if imgui.AnimButton('x##clear_search',imgui.ImVec2(imgui.GetFrameHeight(),imgui.GetFrameHeight())) then
@@ -6020,16 +6079,25 @@ local function _render_sidebar()
         end
         if imgui.IsItemHovered() then imgui.SetTooltip('Clear search') end
     end
+    -- Tighten the gaps only if the screen height caps the window.
+    local page_count = #_main_window.ordered_ids
+    local sidebar_bottom = imgui.GetWindowPos().y + imgui.GetWindowSize().y
+    local first_row_y = imgui.GetCursorScreenPos().y + imgui.GetScrollY()
+    local available_height = sidebar_bottom - first_row_y
+    local row_spacing = math.floor((available_height - page_count * imgui.PageButtonHeight()) / math.max(1, page_count - 1))
+    row_spacing = math.max(0, math.min(style.ItemSpacing.y, row_spacing))
+    imgui.PushStyleVar(imgui.StyleVar.ItemSpacing, imgui.ImVec2(style.ItemSpacing.x, row_spacing))
+
     for _, id in ipairs(_main_window.ordered_ids) do
         local page = _main_window.pages[id]
-
         imgui.SetCursorPosX(window_padding.x)
 
-        if imgui.PageButton(_main_window.current_page == id, page.icon, page.title, imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH) - (window_padding.x * 2), nil, page.icon_box_color) then
+        if imgui.PageButton(_main_window.current_page == id, page.icon, page.title, content_width, nil, page.icon_box_color) then
             _select_page(id)
         end
     end
 
+    imgui.PopStyleVar()
     imgui.EndChild()
 end
 
@@ -6108,12 +6176,20 @@ end
 local function _render_window()
     require("src.shared").hotkey_manager:flush_ui_input()
     local display = imgui.GetIO().DisplaySize
+    local style = imgui.GetStyle()
+    local sidebar_width = imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH)
+    local content_width = sidebar_width - style.WindowPadding.x * 2
+    local page_count = #_main_window.ordered_ids
+    local sidebar_height = style.WindowPadding.y / 2 + content_width * LOGO_HEIGHT_RATIO + imgui.GetFrameHeight()
+        + page_count * math.ceil(imgui.PageButtonHeight()) + (page_count + 1) * style.ItemSpacing.y
+    local needed_height = math.ceil(sidebar_height + style.WindowPadding.y * 2)
+    local window_height = math.min(display.y - 32, math.max(imgui.ScaleValue(WINDOW.SIZE.y), needed_height))
 
     imgui.SetNextWindowPos(imgui.ImVec2(display.x / 2, display.y / 2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
-    imgui.SetNextWindowSize(imgui.ImVec2(math.min(display.x-32,imgui.ScaleValue(WINDOW.SIZE.x)), math.min(display.y-32,imgui.ScaleValue(WINDOW.SIZE.y))))
+    imgui.SetNextWindowSize(imgui.ImVec2(math.min(display.x - 32, imgui.ScaleValue(WINDOW.SIZE.x)), window_height))
 
     if imgui.Begin("##main_window", _main_window.is_open, WINDOW.FLAGS) then
-        _render_sidebar()
+        _render_sidebar(sidebar_width, content_width)
         imgui.SameLine()
         _render_content()
     end
@@ -6863,9 +6939,13 @@ function imgui.StatusDot(id, radius, selected)
     return selected
 end
 
+function imgui.PageButtonHeight()
+    return imgui.GetFrameHeight() * 1.2
+end
+
 function imgui.PageButton(active, icon, label, button_width, status_opts, icon_box_color)
     local style = imgui.GetStyle()
-    local button_height = imgui.GetFrameHeight() * 1.2
+    local button_height = imgui.PageButtonHeight()
     local rounding = style.FrameRounding
 
     local draw_list = imgui.GetWindowDrawList()
@@ -6956,22 +7036,14 @@ function imgui.PageButton(active, icon, label, button_width, status_opts, icon_b
     local icon_size = imgui.CalcTextSize(icon)
     local icon_x = icon_box_x + (icon_box_size - icon_size.x) * 0.5
     local icon_y = icon_box_y + (icon_box_size - icon_size.y) * 0.5
-
-    imgui.SetCursorScreenPos(imgui.ImVec2(icon_x, icon_y))
-    imgui.TextColored(
-        active and style.Colors[imgui.Col.Text] or style.Colors[imgui.Col.TextDisabled],
-        icon
-    )
+    local text_color = imgui.GetColorU32(active and imgui.Col.Text or imgui.Col.TextDisabled)
+    draw_list:AddText(imgui.ImVec2(icon_x, icon_y), text_color, icon)
 
     local text_size = imgui.CalcTextSize(label)
     local label_x = icon_box_x + icon_box_size + style.ItemSpacing.x
     local label_y = cursor_pos.y + (button_height - text_size.y) * 0.5
 
-    imgui.SetCursorScreenPos(imgui.ImVec2(label_x, label_y))
-    imgui.TextColored(
-        active and style.Colors[imgui.Col.Text] or style.Colors[imgui.Col.TextDisabled],
-        label
-    )
+    draw_list:AddText(imgui.ImVec2(label_x, label_y), text_color, label)
 
     if status_opts then
         local dot_radius = imgui.GetFontSize() * 0.5
@@ -6991,8 +7063,6 @@ function imgui.PageButton(active, icon, label, button_width, status_opts, icon_b
             status_opts.on_toggle(status_opts.value)
         end
     end
-
-    imgui.Dummy(imgui.ImVec2(0, style.ItemSpacing.y * 0.5))
 
     return clicked
 end
@@ -7756,6 +7826,17 @@ return A
 
 end
 
+package.preload['src.utils.Browser'] = function()
+local ffi=require('ffi')
+
+return function(url)
+    pcall(ffi.cdef,'void* __stdcall ShellExecuteA(void*,const char*,const char*,const char*,const char*,int);')
+    local result=ffi.load('shell32').ShellExecuteA(nil,'open',url,nil,nil,1)
+    return tonumber(ffi.cast('intptr_t',result))>32
+end
+
+end
+
 package.preload['src.utils.ElementRealigner'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\utils\ElementRealigner.lua
 
@@ -7921,6 +8002,57 @@ function Player:is_valid_samp_name(name)
 end
 
 return Player
+
+end
+
+package.preload['src.utils.UpdateFiles'] = function()
+local ffi = require('ffi')
+local Files = {}
+
+function Files.path(p)
+    if p:match('^%a:[/\\]') then return p end
+    return getWorkingDirectory() .. '/' .. p
+end
+function Files.write(path, text)
+    path=Files.path(path)
+    local tmp=path..'.tmp'
+    local f,err=io.open(tmp,'wb'); if not f then return false,err end
+    local ok,why=f:write(text); f:close()
+    if not ok then return false,why end
+    local check=io.open(tmp,'rb'); if not check then return false,'Cannot verify temporary file' end
+    local same=check:read('*a')==text; check:close()
+    if not same then return false,'Temporary file differs' end
+    -- Windows atomic replacement with write-through; old file remains intact on failure.
+    pcall(ffi.cdef,'int __stdcall MoveFileExA(const char*,const char*,unsigned long);')
+    if ffi.load('kernel32').MoveFileExA(tmp,path,9)==0 then return false,'Atomic replacement failed' end
+    return true
+end
+function Files.read(path)
+    local f=io.open(Files.path(path),'rb'); if not f then return nil end
+    local s=f:read('*a');f:close();return s
+end
+
+function Files.sha256(text)
+    pcall(ffi.cdef,[[
+        int __stdcall CryptAcquireContextA(uintptr_t*,const char*,const char*,unsigned long,unsigned long);
+        int __stdcall CryptCreateHash(uintptr_t,unsigned int,uintptr_t,unsigned long,uintptr_t*);
+        int __stdcall CryptHashData(uintptr_t,const unsigned char*,unsigned long,unsigned long);
+        int __stdcall CryptGetHashParam(uintptr_t,unsigned long,unsigned char*,unsigned long*,unsigned long);
+        int __stdcall CryptDestroyHash(uintptr_t);
+        int __stdcall CryptReleaseContext(uintptr_t,unsigned long);
+    ]])
+    local a=ffi.load('advapi32');local ctx=ffi.new('uintptr_t[1]');local hash=ffi.new('uintptr_t[1]')
+    if a.CryptAcquireContextA(ctx,nil,nil,24,0xF0000000)==0 then return nil end
+    if a.CryptCreateHash(ctx[0],0x800c,0,0,hash)==0 then a.CryptReleaseContext(ctx[0],0);return nil end
+    local digest=ffi.new('unsigned char[32]');local size=ffi.new('unsigned long[1]',32)
+    local ok=a.CryptHashData(hash[0],ffi.cast('const unsigned char*',text),#text,0)~=0 and a.CryptGetHashParam(hash[0],2,digest,size,0)~=0
+    a.CryptDestroyHash(hash[0]);a.CryptReleaseContext(ctx[0],0)
+    if not ok then return nil end
+    local out={};for i=0,31 do out[#out+1]=string.format('%02x',digest[i]) end
+    return table.concat(out)
+end
+
+return Files
 
 end
 
@@ -8330,4 +8462,320 @@ return ZoneManager
 
 end
 
+local package_check = require('src.core.Package')
+local ready, mismatch = package_check.check({
+    ["lib/dkjson.lua"] = "1f56a6971ffce3021ece3afdc06163f10bee91264d0d29cc88bbbeb43cffd2d2",
+    ["lib/effil.lua"] = "5685236a73337237372226bef9740a6f7cb981998912724a0e4bd326da7e96dd",
+    ["lib/fAwesome7.lua"] = "17a682f6d4c8b9dcf4bcd94c94610ac5cda1bc0bbdf6513386791f72ca73448a",
+    ["lib/game/keys.lua"] = "10bfe26a67586eabf07823077ab5ba6acd78ebda7666179eaea91fcf2a6a5836",
+    ["lib/leone/upmimgui/cdefs.lua"] = "0779013e8586605c2daa3270b77d616af08e5fc109d02f80aa9011d846e41ee7",
+    ["lib/leone/upmimgui/cimguidx9.dll"] = "8e00117fca5dc8f7b8e2f90996533f65ddcc3435671e0bb1e6502b9319345141",
+    ["lib/leone/upmimgui/dx9.lua"] = "dec6a73133cdeb210be7c7937b445f3e0393a74337f24a39b7e0cd5b2250781a",
+    ["lib/leone/upmimgui/imgui.lua"] = "038fb246a49ded24e13c45910c908c014eb1bfe9c5b145f56c2689b8694d8a0f",
+    ["lib/leone/upmimgui/init.lua"] = "774f9d45dbb496351b10b7177b69126fcf7d20036260f8c1764de188619e14e1",
+    ["lib/leone/upmimgui/win32.lua"] = "697a7c1e22c9bea1849cfd926e0e0c72d61a82ed5f3ac0450559cae17bb1d4f6",
+    ["lib/libeffil.dll"] = "8ac736f5d9116fda2682909477bb7da83e53fbc1eaaeb2826aec35dbd6da874c",
+    ["lib/samp/events/bitstream_io.lua"] = "7f62d7dffa26d0f723a1a307eb04b022fcafb79959e1ed4fa3c348a52bcb1ec9",
+    ["lib/samp/events/core.lua"] = "54a16caa6c9d073031d2c3706c34e4f83f7736b202a7efc804fd50708c6c2f75",
+    ["lib/samp/events/extra_types.lua"] = "89cf1988d8fd450f67ad4778aecc63e36ec353419cb8e31342ee7083e7cc4783",
+    ["lib/samp/events/handlers.lua"] = "1d6d2498fa90cf692809f6cd4ba3e3d30615c3b8f7764bfdfbe863ee244a81c8",
+    ["lib/samp/events/utils.lua"] = "0585c8ee8d65ac0b389c320baa9d0c7a17393640b1e13ddd3cc1ff0ec93e381f",
+    ["lib/samp/events.lua"] = "af575f181035ffec76424b3feb2554662e81289c85e9a305637aba9445b7d440",
+    ["lib/samp/raknet.lua"] = "d0c47eefefe87387d00e806274d69a0dd2a22e885aa934fe08ec82b89cd1a3a1",
+    ["lib/samp/synchronization.lua"] = "1609e479684198d343cac5c8f4f5a521ba631eb80f7231ef4a103c3315d9b6fc",
+    ["lib/sampfuncs.lua"] = "7c2528ec287d4ffdcb381f3a96a6678361075828cc727e9ff2e9cb91d4ad0cd3",
+    ["lib/vector3d.lua"] = "53ef9eedad5994e05320dcb5c14b504dd6c09e6a70111d76eb60a52d6c4a68af",
+    ["lib/vkeys.lua"] = "a74b3f76666e8c8b9fa078e239bcfd3123762ee064c242f9349fdda9a449718b",
+    ["lib/windows/message.lua"] = "4ab3845c28e7755c86736162fd22cba165e534ec1df5c76665ce8ffdbb8a929f",
+    ["resource/Leone Menu/leone-logo.png"] = "0f96d0383ff4f44e79f204e013143323f5fdfc69e1e8f3fe2f237d4dd7c8ceaf",
+    ["resource/Leone Menu/modloadedin.mp3"] = "cd84743053dbe226d1bd6b628c89e41e7842b8bca98d70c4aba8743e759cd6a2",
+    ["resource/Leone Menu/skin-overrides/1.png"] = "6ee1cbe21ca7cf586817fb9d6af104d630ea6fcc8e5884d35a8a4c33cfaa49e0",
+    ["resource/Leone Menu/skin-overrides/2.png"] = "d6aaf2264385181b7c446b06d0ed60d420d3a7fc31cdefb406186c6e14daf9b0",
+    ["resource/Leone Menu/skins/0.png"] = "e17e549042588dd0e2e48f751e51659afde26a3ac4afb163e583c860f39830ec",
+    ["resource/Leone Menu/skins/1.png"] = "0d0cfe877bde41cf5a3a6dc61b2a45cf6b8497995380006951c372b520be9bd1",
+    ["resource/Leone Menu/skins/10.png"] = "03daf473defd5c6eb1d752f5569c7d87273de50f86596b4a56106e35d37e2206",
+    ["resource/Leone Menu/skins/100.png"] = "6ace7b80348161ac0b086212194f94508fa8896a1cd6125f6b79cd98c3cbca0e",
+    ["resource/Leone Menu/skins/101.png"] = "52b74c4e36e20bcb1ec6ce3af08c82cf21fd1e08b709fc74f07653eff025c3ed",
+    ["resource/Leone Menu/skins/102.png"] = "f3c0a9098e66aff22605b55946fb8ec4ecb2f75204ba60c04e020df7c38920fe",
+    ["resource/Leone Menu/skins/103.png"] = "7a54dc31dbbbf07c9d83bb4eade0bd474b74cf0c04fe6ea25be5ad45cf619508",
+    ["resource/Leone Menu/skins/104.png"] = "45f563bb441a9081c5b24d070dc8235f6a4dab94934e2ba11a2da2bebf2494a9",
+    ["resource/Leone Menu/skins/105.png"] = "30a78da0056f8d0c66b83b686d09f44f32ba0b7383434ee97f7ab15e4457506a",
+    ["resource/Leone Menu/skins/106.png"] = "7d337cfde79ae1222df017fbf5bb7a3dd7d9de13dc8e36f4c13852591bc9bca2",
+    ["resource/Leone Menu/skins/107.png"] = "295ff2eed4748e7823a1ee7380e4f1c94f53560e5073d78192a8bbba1620ff14",
+    ["resource/Leone Menu/skins/108.png"] = "7f830db2213769b2c7c55e768f3deda7dfff5fee40a99594bbbe5408a28d83ca",
+    ["resource/Leone Menu/skins/109.png"] = "d9fc453095c4c4eaf12566a59fd0b158363bc0f0b1f3a3550f80c78f9fa88769",
+    ["resource/Leone Menu/skins/11.png"] = "31c8a07f93a363c71e6c175ca2a1ce636ae0d11cfb393c7b2fd87c07afdd6ebb",
+    ["resource/Leone Menu/skins/110.png"] = "96bdeb60a78276d8abc9da1e1cee5f04a70d366adb37811354139bf80101eb77",
+    ["resource/Leone Menu/skins/111.png"] = "c796592394c8d7754f2a7218013dbb77d0fda473b90535dd71fe4b404203fd44",
+    ["resource/Leone Menu/skins/112.png"] = "9c4431b7e07e5fa71031dc054f14208812a28793961f9dfa5d644973048f353c",
+    ["resource/Leone Menu/skins/113.png"] = "cb477006054b98b3ea2a068d64131b9ebaf31d3fc24fead45015431e796b8d04",
+    ["resource/Leone Menu/skins/114.png"] = "0f867a7cb74d5f3a948e364bbbf44021dbf1fb70291cb0c86717feda865f9a92",
+    ["resource/Leone Menu/skins/115.png"] = "0085791ab045a94626aa08deb071663981832aaed513f9c1641efedb1f9ae8ee",
+    ["resource/Leone Menu/skins/116.png"] = "4b95ae6787588194b49f89a94dfaad8775cec8e29fb5f348edae2b6c6fbef0c1",
+    ["resource/Leone Menu/skins/117.png"] = "b012a6af0933b45259d28c50277967bd9848e275cbfe2a77637ce0fbe3d586c7",
+    ["resource/Leone Menu/skins/118.png"] = "40f1b685601a0744ecf6546409ae2ea203cc0db92efcbb7ccfb5d83d10c498b4",
+    ["resource/Leone Menu/skins/119.png"] = "69ffa53827dcf2afe97c68cdbe2bc7bfa07e95400f9785eb432d4f7b691a420a",
+    ["resource/Leone Menu/skins/12.png"] = "542c10a290bde97f302eb2b3f59be655232f47dfb06df81ecbf784f545610590",
+    ["resource/Leone Menu/skins/120.png"] = "d57b7810fce25b3949ae66ed36dbcb0047b1075577451365fa19adcd0f549f68",
+    ["resource/Leone Menu/skins/121.png"] = "d3941315b6429bebe696da455a9891aa0e1693335b5244e5c9a8116f810077ae",
+    ["resource/Leone Menu/skins/122.png"] = "dd4079baa484465a934db446f053290bbb1c781b48a84dcc8dc4c771df62ee58",
+    ["resource/Leone Menu/skins/123.png"] = "b3302da0a84c411ef7f8118460fec756577c79eaf3479de0463b7d0e99478ae9",
+    ["resource/Leone Menu/skins/124.png"] = "5cc76532a63b17f00008dbe5993513ab2f2ef0d315d25a37794dfeb6d0232e5c",
+    ["resource/Leone Menu/skins/125.png"] = "a34b6a23bcd4d678756f68e9b4df664f7e7a8156ebafad1e25fab0f945c61ea8",
+    ["resource/Leone Menu/skins/126.png"] = "e50a05981c44de28409bef5aea21e9122faeead7f96575eb05fa6e00493086b1",
+    ["resource/Leone Menu/skins/127.png"] = "9a63efcd6ac974e717d7ef200d4aa8bcb8673254b776fb7c103458c399e68969",
+    ["resource/Leone Menu/skins/128.png"] = "d3a9db9293d02113115b24d834af9852a6e303137908f4a72538b80a8473c402",
+    ["resource/Leone Menu/skins/129.png"] = "23c9d9909af2201a2df57d6f5b0785f7871111267ea55dbe0e6fd355191ec4b6",
+    ["resource/Leone Menu/skins/13.png"] = "796e4d49f12879a0cb3979411b84cb5bcb70e03718f0bbeeefcb5ca39bd06231",
+    ["resource/Leone Menu/skins/130.png"] = "d5363e78049f51a142f8c12d4d42e4e9d65bc9f63b7266fc8e35ffc132dd3883",
+    ["resource/Leone Menu/skins/131.png"] = "332cf230a9e3d567d046c2eb434549b31593e1130bfa7fb328ae82c79a619acc",
+    ["resource/Leone Menu/skins/132.png"] = "b99338c3f63fd973994fef395d2533120c32527668c0bd793b3f82e17db2f025",
+    ["resource/Leone Menu/skins/133.png"] = "3b44cdf855f86c53f4eae98040ff07cbc14fae4d7a059645c44b8bebd36f236e",
+    ["resource/Leone Menu/skins/134.png"] = "0e3adf0c03784fd93044cd15bc9549f7dff4993088a76e4f93b01c3227a50728",
+    ["resource/Leone Menu/skins/135.png"] = "825afb8f1f28893e26f6af8b658eb390471b32d5bed8d7439f54be1ba79e20db",
+    ["resource/Leone Menu/skins/136.png"] = "260345a320c7a2d1b76af3ddba830af35ba4c8cd8fb78e73739528376f486cfe",
+    ["resource/Leone Menu/skins/137.png"] = "d25159977ea156e4d7d941b19bdc2bc37ac1a11fc48d7519bcf18ac87e4cda4b",
+    ["resource/Leone Menu/skins/138.png"] = "f37aabf0e91825f6aa41e2bbd9de5ba2e8f76800b86777f4aca884d4ac6e35f5",
+    ["resource/Leone Menu/skins/139.png"] = "267dbfc6d9f41c9705277c01a001c83b340b7fe514ebe7c4b7792ca26a133b51",
+    ["resource/Leone Menu/skins/14.png"] = "40bab96bcfaa58eacc8b77069b41a66cd8160269ec6e86f15a38a6c156e67a5d",
+    ["resource/Leone Menu/skins/140.png"] = "441bbf8b912789200ba6d94ccb57268e0d3b64a985217a163b16b7d42ca7d676",
+    ["resource/Leone Menu/skins/141.png"] = "18bd363cb203244f75fc5bd609c7d4c121ef8ae181161bf406be3b22258b3f1e",
+    ["resource/Leone Menu/skins/142.png"] = "d1c04224324a2752435cd26302ede7abc03a24ef8b208a08920aff62352d8e5f",
+    ["resource/Leone Menu/skins/143.png"] = "8302ecd2d40635aa691c16868dba7f5dad8c843214ac1bb6df35e3ce757a6272",
+    ["resource/Leone Menu/skins/144.png"] = "ca3e14ec6e98f0f649f139fff4f8dcd3cde78875a5b778a5278a7302a9a39fa3",
+    ["resource/Leone Menu/skins/145.png"] = "a33d6ef026cc7b0c4449f05ceec51b838283fa94be01348560542c2ae66d4d32",
+    ["resource/Leone Menu/skins/146.png"] = "bae3a9ed8f63e3b7fe149c497185bd329d5572b7b90dbcc7afd14260dad03bc7",
+    ["resource/Leone Menu/skins/147.png"] = "9369b6f3d8cb67029508dd06292b41dd0bfb1c0620dfa662c7ef081ac97f4e0a",
+    ["resource/Leone Menu/skins/148.png"] = "e0b8732e8795163e8d3b6da9db9cdb6102edf71b3b4ecd76f5dad6d795a2aa82",
+    ["resource/Leone Menu/skins/149.png"] = "081e45624bb7bf4bdfa107d5d42d06ad3ba9d3d8e40ebd3f9d13d03fba21b174",
+    ["resource/Leone Menu/skins/15.png"] = "16b2df5f18d477fe54ce5ae0699b8f765b7f588e1bfc502d913996f1e9c26913",
+    ["resource/Leone Menu/skins/150.png"] = "53dd9a3f03e9298c5dea52cda1ca9f2960780ef314d57095970f158bab09a75a",
+    ["resource/Leone Menu/skins/151.png"] = "a729d06efeeb20ffd3cd671e5ae5812d67bf407ee418f0950574bbc71988a579",
+    ["resource/Leone Menu/skins/152.png"] = "ed2c762a23dfade7884a8c015aef4d765cc72f2361a13a60028fb578ec080d26",
+    ["resource/Leone Menu/skins/153.png"] = "bef8b098a203922cabc6ae8141eb163ff98097b4392632f8e662a75cc6ed4b45",
+    ["resource/Leone Menu/skins/154.png"] = "dd30ad817c40402f637ed9be9e16af40d7a6c885480d019bea6c97e68c250923",
+    ["resource/Leone Menu/skins/155.png"] = "ee46b359843872b01c246011b8b0e92220cea262ae6e34e44e83a6c35b40f263",
+    ["resource/Leone Menu/skins/156.png"] = "13e16d4d41e7a5d88cabf1c57cd1e6db147d34373e88bd71caaa2ed8231cc9bc",
+    ["resource/Leone Menu/skins/157.png"] = "272a00af05063164d1df0741a5716191a3b61f1e20b6decf73434b48e5057e9c",
+    ["resource/Leone Menu/skins/158.png"] = "a99d1efafb2bbd68c8eb09841bca66b560800daa699d04f092e39f93c9076e9f",
+    ["resource/Leone Menu/skins/159.png"] = "375a17a5ff5370d25a0e724e3de624b4e7db76d776a3e00453b2e716fc62519a",
+    ["resource/Leone Menu/skins/16.png"] = "b7ff23dec4bbb011ae663e9c3e5f38347e62b10925de1a67fc02ee3b026cd664",
+    ["resource/Leone Menu/skins/160.png"] = "3ea78d343bd971919aed00cd32d52a9e24debfd1f7a4fe2447aed0c505145e5d",
+    ["resource/Leone Menu/skins/161.png"] = "a2e23fec204c361755eedfcbb4345a04353d1ce77926ac143fd75bda985418eb",
+    ["resource/Leone Menu/skins/162.png"] = "1711b1ea26389a5c30c77623209d540ca219fc74cbf1e4b729c00099d126243a",
+    ["resource/Leone Menu/skins/163.png"] = "ce7f65204a83ec8cbb8978a954670a6ad5c00c07e41604ed9e6e9b35a01998db",
+    ["resource/Leone Menu/skins/164.png"] = "974b693942fa30e9cc557d447bd141654a3e884b8fdeb328d3b5f38e593f155a",
+    ["resource/Leone Menu/skins/165.png"] = "5b92a8cd2cd0988760370578f577a57340828b1aeb3d86a7873c69e94e8dd016",
+    ["resource/Leone Menu/skins/166.png"] = "343f7dde871fffd9ea17bdcb79097589393fa0758656e60f6f0065c7062a072e",
+    ["resource/Leone Menu/skins/167.png"] = "b7d01f47541cebfa870f793d2b715f4d5adbcfd890425ae0ea37280a8e007a12",
+    ["resource/Leone Menu/skins/168.png"] = "9eff92a7ed139705badd0fcf298e7f6fb26f9d94286a6826f2c331f969455f31",
+    ["resource/Leone Menu/skins/169.png"] = "ef45b9bf24a0611f222392d323156d547a2519c077c1606a93662c07bc547c77",
+    ["resource/Leone Menu/skins/17.png"] = "17bf6bd04e0730c015aec97a176d8fc9ecb88508c6ae39af025f450cf16279c9",
+    ["resource/Leone Menu/skins/170.png"] = "aa7d3c90eb64871e6ee544d038efd1a1238f659b34ffe8e6b6049f5c5d1e4396",
+    ["resource/Leone Menu/skins/171.png"] = "ceac12cd52414da658f5e3818cdfa02545776f409a731fcc6545fb9b2bfd0288",
+    ["resource/Leone Menu/skins/172.png"] = "139ace679fe4bc66d6535f6f84998fabce14851f586d8352b5ba052ff057e77c",
+    ["resource/Leone Menu/skins/173.png"] = "17656eebcf944a287672ad26de18db7b67acbfb8970c87a2e4655b7cea5ffd66",
+    ["resource/Leone Menu/skins/174.png"] = "0d3131df2cd511cbf59b0af14e5b30e71845e0194ccd7910034fb046d4aa1f3b",
+    ["resource/Leone Menu/skins/175.png"] = "db2562c95df694f9d178704f5363bede49a83f5f9059df66a7bcac429345ca48",
+    ["resource/Leone Menu/skins/176.png"] = "292716376344ee91f44dce3bc47f3b88f57241ac3cd8cb3ccee73b9a967b4a51",
+    ["resource/Leone Menu/skins/177.png"] = "b6ea5de48e89eaa5251d61a5a0bf9f501a927f7d80ad23797067703e47609089",
+    ["resource/Leone Menu/skins/178.png"] = "3931d5df1a6f2f2b555350001e340acbe5916d6c79b83023776e1c380a1babc4",
+    ["resource/Leone Menu/skins/179.png"] = "08b341a3d9d358e718a3d15d8022def8452a33e937d8dfdfe9ecde06250de0ae",
+    ["resource/Leone Menu/skins/18.png"] = "9263e8d1fb1e0d7fc0e30a97c633603e5655522bf91b7c618088a6164c53f390",
+    ["resource/Leone Menu/skins/180.png"] = "118281be6720f97eff6ec9a4d3c09c6081ea261d849713b9e775273b87cf358b",
+    ["resource/Leone Menu/skins/181.png"] = "d57f4343099e7d210c09c9bd1b8226f8ab289a56175a5eff5b695c919e33b2b5",
+    ["resource/Leone Menu/skins/182.png"] = "a448e69094bd8d0f4ab500a65f12e3627a8f8687f5441d18034484b502f7656d",
+    ["resource/Leone Menu/skins/183.png"] = "f0034be243d410c7639ed6901cda3aaef238d19d963174e92f31e2e5c76fa93c",
+    ["resource/Leone Menu/skins/184.png"] = "b09609b20dd4830e2c623dee6c99fb1571f0d8d324f7c82494c62517fef6ae31",
+    ["resource/Leone Menu/skins/185.png"] = "2c1d9e4150aae2af9a60ef98c87928c59646bddffe5d062f611c59be2fe92ee4",
+    ["resource/Leone Menu/skins/186.png"] = "30b8e046b8f5d4df53f22c83d96c87dc1bab9947b00cbacf50e596b358751855",
+    ["resource/Leone Menu/skins/187.png"] = "98d54967f8a343c8e68c6448d88156d16cd7a9f6a231544f5e035147451cac4f",
+    ["resource/Leone Menu/skins/188.png"] = "957f5558f4f932ad5c23abee7924731f14efc0b4720f391b6e40998abba50c3d",
+    ["resource/Leone Menu/skins/189.png"] = "2a27bbabb6f6a066968747342cff180e8eb077ce687d8a13ffce07fabb5be556",
+    ["resource/Leone Menu/skins/19.png"] = "a83931f29814844bdec1388723de18dad3ef2d0ef725e7e0e6dd6357b1f1cef3",
+    ["resource/Leone Menu/skins/190.png"] = "1796135f759bf3d1b597fd563764110a49b5c9610d79cb0c13b7ebd247306553",
+    ["resource/Leone Menu/skins/191.png"] = "5db00110f4f2d7fc95014baab26f6683c6f77a648377dea5fed25e98622488eb",
+    ["resource/Leone Menu/skins/192.png"] = "3d98d9c6fc374e766b8b7225ce18b379ef4783b08d4044841ad4823b03d24d70",
+    ["resource/Leone Menu/skins/193.png"] = "1359dd8507b21878e208d201ef219fd462821c86632bb06e0b6d0e9273faca2f",
+    ["resource/Leone Menu/skins/194.png"] = "fc788ca8a29430d25f46e93deec578f13797e86db87e5f1a1cb3e7ab85eb76ad",
+    ["resource/Leone Menu/skins/195.png"] = "5f9e484274cbb8dcc118c1a78c7965971c98bda86435d49829823e56c399886f",
+    ["resource/Leone Menu/skins/196.png"] = "739d4b5760542d0d2d717d3fa6ef04cbbd85d37aa4e0fdeac5d66c9b487e35e4",
+    ["resource/Leone Menu/skins/197.png"] = "504f9b373d224a395136c713b3ee38c45ec735fe1985e1ddde344a6ee007dc75",
+    ["resource/Leone Menu/skins/198.png"] = "658409dadbe1623d0decbd13c50e2f5c02285cfd654413040350ef347bd2ddc7",
+    ["resource/Leone Menu/skins/199.png"] = "1aad0c48d77d0b4fcce8e8151e41e6c8d5922cee859347b5e114c91dc714dc78",
+    ["resource/Leone Menu/skins/2.png"] = "7575bf97025db71cc3507f9a15d5eb0257fc63a0aecd6f3d698de9950928d027",
+    ["resource/Leone Menu/skins/20.png"] = "df808b9f1c5d243a23b4b6551e500aa2458b9eb68d84afc64b4e78d54c1b15a4",
+    ["resource/Leone Menu/skins/200.png"] = "7a4c05a2a6d45be9a5515fe066330fdd1d646911b4504830684f3440e0629cd7",
+    ["resource/Leone Menu/skins/201.png"] = "4d70eb48db5ef7cf10d1bd201dcce1ba208dbe0de6b0345c82f1f5846c18a9f2",
+    ["resource/Leone Menu/skins/202.png"] = "de706fdfc3906e5b8d7bbae0661ef2a809560222ff142491fff420b580afc516",
+    ["resource/Leone Menu/skins/203.png"] = "6ea9c056f299ec035f64f3e5d06757a43dabc0d5bad46e9e8b3aaf20f1fb72c6",
+    ["resource/Leone Menu/skins/204.png"] = "894665213c5b182103d2d83fb1ebde1b691e08bdd8cae605cedecf46f7149bf2",
+    ["resource/Leone Menu/skins/205.png"] = "803d0668c798f6bed317b4447eb45f50137e8fbfeeace989e745a38d3d3e5c07",
+    ["resource/Leone Menu/skins/206.png"] = "f5d8e212465da7a8afba2e5032c1c2f895383fe15a0743d6d4e931bbd8889158",
+    ["resource/Leone Menu/skins/207.png"] = "564eaf8aac0ea26b34fe727988d6dba2da8e5c6781f8e887a854fdd4594e5894",
+    ["resource/Leone Menu/skins/208.png"] = "bf68ab7515824221b854e8615c24170c7e1dd90e80133d967d85eb1288133e97",
+    ["resource/Leone Menu/skins/209.png"] = "b8424ee783c520b0b3ba4ae7ffd6e8300a66f36f46621d57ba2170b4cc4f3063",
+    ["resource/Leone Menu/skins/21.png"] = "36d33d2ae53f8c51e935bf7d3057d458a9bb9a7b8e4199c43fd70046f8c8dfc2",
+    ["resource/Leone Menu/skins/210.png"] = "9ef4b2517b8b38b681355c088c7e1efc3205ad6ae2ee32eb0a4734349a6f2f4f",
+    ["resource/Leone Menu/skins/211.png"] = "8ed7a9449a083f2481e5f949ab7fe2b490c811d9f5bfc89733c0ec570a0076ba",
+    ["resource/Leone Menu/skins/212.png"] = "df8f287b572f9c71ee71b1dcf7b234ed16c7d2d6c8a8e285f8ea3a0a37bea3eb",
+    ["resource/Leone Menu/skins/213.png"] = "991b08c580e774902b030e09e93565a8f5da91569e35be1cb8d62e73a024fe1a",
+    ["resource/Leone Menu/skins/214.png"] = "c531c9faff99e281f1c5ac0cb59b571fa29369eb20de7e47d739820ae95f38be",
+    ["resource/Leone Menu/skins/215.png"] = "59175b7968c2d5c470b4655470e12b86625aa5bf88e39e5d18b372720ab70c4f",
+    ["resource/Leone Menu/skins/216.png"] = "c4dccf03b6df3bf62e914e84cc44733760a5c84798b0d0b0783d35eed799db98",
+    ["resource/Leone Menu/skins/217.png"] = "48903caabf16d45a11ef6a7944a70d13807461ea285777ec872e05e56946f0a7",
+    ["resource/Leone Menu/skins/218.png"] = "d681fb0d7bd0438f536c762fda1c0da72a4aa51740904a76886e22c8f4a7c8c4",
+    ["resource/Leone Menu/skins/219.png"] = "48c0499657352e0836f16495565583668c436df6262cf3e5294786ed33959c4a",
+    ["resource/Leone Menu/skins/22.png"] = "3c2b04e049170d325bf3061d4ea558f04011351a95b7a9d9884adefe0e7ec46d",
+    ["resource/Leone Menu/skins/220.png"] = "7b38884c8291a543107db2c6eecb4dabb1dfa1ba261f0ec72de0785864bd9d95",
+    ["resource/Leone Menu/skins/221.png"] = "0022e9854376b6068f05da73bd56a18688df72249314b9992ba7bd488d26e854",
+    ["resource/Leone Menu/skins/222.png"] = "ad12b8d315ed062e7e367f2acd4947e940bf59e682dbff51f71192252a01f2a4",
+    ["resource/Leone Menu/skins/223.png"] = "d734b162a9357d35320335541e9768ecb2d161274708260d3e36244a4acd996f",
+    ["resource/Leone Menu/skins/224.png"] = "e9fa02a9beb1ce594a856a0b439c437c60d90bf020945eefa3bfe13c97b2a25d",
+    ["resource/Leone Menu/skins/225.png"] = "947931e907e0f4f9a905fb831e222f7d446ad8dd33d20e176eb9d5ce71c8a11d",
+    ["resource/Leone Menu/skins/226.png"] = "644e2acc06d0f7cc496f57c85a372b4f056ed0986463eece9e29c480269a89c5",
+    ["resource/Leone Menu/skins/227.png"] = "1d6b2b630b0130fdd47ceb91356378975a3a508a6a330f4f31279779068b0257",
+    ["resource/Leone Menu/skins/228.png"] = "000677e790c3c64771d6892f7a35f1ef9923b6a64ee690eccc59b20d1f69835a",
+    ["resource/Leone Menu/skins/229.png"] = "f1a4996ce40e2ee312a7f5b66c09f6bd954e4b8b84cfd3fa636488fa1b3778a6",
+    ["resource/Leone Menu/skins/23.png"] = "b2422a86a4848f9005624a0f9dd470940e56baa7c85fda9985c04b54a25d7b4a",
+    ["resource/Leone Menu/skins/230.png"] = "78897d3391cb7079bb56cd5a08f9e43f6ed1faefd4642af26141a6f03d076358",
+    ["resource/Leone Menu/skins/231.png"] = "ec3ccca4da4e31623fb4c8ad3d8aed0e2372b8d2ab98555dfbf6af1a33339da9",
+    ["resource/Leone Menu/skins/232.png"] = "f21b3cf735a3ec7a2e138f17065bd366f0d4c8726223e7c03bfd3744068fadfb",
+    ["resource/Leone Menu/skins/233.png"] = "7d7b3bd31a288db165eac2d668f196e93f4e336d4ba71e0628f8237aba681242",
+    ["resource/Leone Menu/skins/234.png"] = "d9229dcd047daec2d24589ee34d446626965dff72231fd8feb4893b794bd5943",
+    ["resource/Leone Menu/skins/235.png"] = "f456018e9c8fdf2bafee53fa5175bc1e3648ece8ebaf501e04d287ce9a969b39",
+    ["resource/Leone Menu/skins/236.png"] = "867fb33bcd1b5cd1865c38bc518ebc21b6637e68062d049cff879a51bd2e2de8",
+    ["resource/Leone Menu/skins/237.png"] = "6932d006ce149788235f2ad2101c5bd2bb738d96e6d14edb1200153a05a0bcb3",
+    ["resource/Leone Menu/skins/238.png"] = "7ce3c8ab2dc110c475ddaa5c88bb50105a6dd4e5bf19040c472d322c640bb0c7",
+    ["resource/Leone Menu/skins/239.png"] = "a7bad4fca0d5d174756f2146fce9f9344c270ee0339bfd4c15cd3b8b140c523d",
+    ["resource/Leone Menu/skins/24.png"] = "b04543a043bf83b5acb8ba640da5dcf2a35cc04296487cfd5fde2f8fad9d021b",
+    ["resource/Leone Menu/skins/240.png"] = "550340a6658ee0f2a4472ac0adda59dfa75a22a67fa21d5285b7ddc4c3720d5c",
+    ["resource/Leone Menu/skins/241.png"] = "5e71cd66a795e0ef410c9c1da05a5c0334c1205b8143ddf1df83bb61577171d4",
+    ["resource/Leone Menu/skins/242.png"] = "21cf693104bba4784170ff2b773dd71f125f3fccbd7abde87c237f0e15ee09ee",
+    ["resource/Leone Menu/skins/243.png"] = "c70a7e26384b17b3ce6472db896b8dd9b4eac318428df914b09940dcf70d29e6",
+    ["resource/Leone Menu/skins/244.png"] = "cfd197db803445d1aa3448866f9a2386afb82f3826dc31a44f0e2704de8d8174",
+    ["resource/Leone Menu/skins/245.png"] = "47f5982ee92beeee26dc43ea6a0050af2ebac3e363eeb6705033b8d2fc4dd766",
+    ["resource/Leone Menu/skins/246.png"] = "692b8fb6e24d746af7025005298d6931c0ba0eb4d75827349378209f67a28c4e",
+    ["resource/Leone Menu/skins/247.png"] = "634a1bc12e6e5495f4cf4d803c5a20e1d30393a40b4a217773bc8f603bdb7d00",
+    ["resource/Leone Menu/skins/248.png"] = "d9b7de625472d006adb97fb84e6ab011a7d8229646c70762a52329908fb946e6",
+    ["resource/Leone Menu/skins/249.png"] = "2303064f9bbb84c047064ffc07c05da41d13b4329653923ccc2de7ad53ac8036",
+    ["resource/Leone Menu/skins/25.png"] = "e90a354044600dc518ea8e9e5290fdd24881180b5258ed37475c62f66a70f344",
+    ["resource/Leone Menu/skins/250.png"] = "3f8795250a31b97ea7d56f785d37403174c9300e4e04aa9d82f1a8ced887f6a9",
+    ["resource/Leone Menu/skins/251.png"] = "c7b2caac67cbcd8ac5ef1dd5e8818f921f506698c3714565c9d9e176720f844d",
+    ["resource/Leone Menu/skins/252.png"] = "4244f464b61f8f6ff43c278fb5871415cf499ea6793720aa838a85c67b75a169",
+    ["resource/Leone Menu/skins/253.png"] = "98b2452714991ab80a2167d8190406ccd05f1844ae417b9d609a75c61373c092",
+    ["resource/Leone Menu/skins/254.png"] = "2e381389e558dfdbf2e70435892806ca871fedfde0d7bc89c07817ca481017b9",
+    ["resource/Leone Menu/skins/255.png"] = "6ca3af17cd8e90ca3ceb0895a11a6741bbee87fc08794af4ee9e5c21aa900f85",
+    ["resource/Leone Menu/skins/256.png"] = "832168ecf84968e00811bb6c93eea4efd5eee26e0dcc8436fe1ca3ab3b89f56a",
+    ["resource/Leone Menu/skins/257.png"] = "73c0e072d30dbac9559a6bdc1644afd3de87aef154683ef5a64cbb2aacb93bf0",
+    ["resource/Leone Menu/skins/258.png"] = "203b836e16e95dad054c705e58f0eb37a83d38e97a3ce29a4347b10ff10cfd63",
+    ["resource/Leone Menu/skins/259.png"] = "2bd9411ed7a3dfd30a6054a9d672290d63c27506881afb73e83eda3f1ad7ca73",
+    ["resource/Leone Menu/skins/26.png"] = "d305ce05f32a27eae5f3662473372b04e1c636f5b670e9b6f0544927aa8a29fa",
+    ["resource/Leone Menu/skins/260.png"] = "8be1913f5cdf44bcc67041f2d1700f47e71802ec448131e99b533902cae61c9f",
+    ["resource/Leone Menu/skins/261.png"] = "0908f023e220badae4f86f3a4ad7ab477d7cacd20857dca465ad04996285cc3f",
+    ["resource/Leone Menu/skins/262.png"] = "6eea5e14a6119d6f550ef36d6cbf07697fb70d204667acc3663c0984fdba9a5f",
+    ["resource/Leone Menu/skins/263.png"] = "df63f524efeadf08ef10036abb10b79d541e2e9a89f52ad5eef60975d347dab1",
+    ["resource/Leone Menu/skins/264.png"] = "e86c8f8e7e8e6956a5e9fe1ca28c954fc277a826a47182ecda9d70dc0c3ba20b",
+    ["resource/Leone Menu/skins/268.png"] = "95311aec2bd60c637ef7ffb881bcfa42af5125d647a2a8e52230e073efa56d8b",
+    ["resource/Leone Menu/skins/269.png"] = "4f40d7fe7b844539a6ceda50c2db19672458fde9b82435bfcf63545488f55d23",
+    ["resource/Leone Menu/skins/27.png"] = "d989c2da198a26fd0dd7ba2571374398e17fb81201c30075133ed4d977e0144b",
+    ["resource/Leone Menu/skins/270.png"] = "b334ac85cd268475c2d590255c434b5bbe57e47398e67b2f9fba4885f40de7a0",
+    ["resource/Leone Menu/skins/271.png"] = "e4c96dae3093c699e6b5027b882f7fda5bd34c8de3af94bcb45379c062b11c29",
+    ["resource/Leone Menu/skins/272.png"] = "2d702d1817c17c6b122a38b8d7119bf674f5ce3e899e8f14c579af3db6eff363",
+    ["resource/Leone Menu/skins/273.png"] = "89001a4e53a001b6e4fd1e88584463ca8829dc3f032c0ded7af40fc4565c043f",
+    ["resource/Leone Menu/skins/28.png"] = "5b3bcddd1b179d76aacf75c1259e7e62241075ad7c0a559ee898c89717f2bb0e",
+    ["resource/Leone Menu/skins/289.png"] = "6a6dadf4e66c255766cb526f157dca5f70375aa3b94f5ecb3457c4051d269fd3",
+    ["resource/Leone Menu/skins/29.png"] = "77e11da82269e8ce6849bf9dfbcd97d0124eab324b40e0b90e3b4bc1e91eea2d",
+    ["resource/Leone Menu/skins/290.png"] = "6f3e2b0782b535dabcd26c3c266063d1aa4fc68417582f2bd92c8ec8bc836a5a",
+    ["resource/Leone Menu/skins/291.png"] = "7b35dfdbec4b5e2922479cc69e91d20ef041bca46feaa69b0f315567bfec9480",
+    ["resource/Leone Menu/skins/292.png"] = "2038645eecce8010a96c53250d900e2b303b27ebb145a0771041e47bcc22edd6",
+    ["resource/Leone Menu/skins/293.png"] = "7c617fe51dcc0e997c45e664a59b2fe10cdf1a5889ccf214d5b9c6876942f8df",
+    ["resource/Leone Menu/skins/294.png"] = "fdbc45f89b70d7fd82de0e982fb33320c27163486b713ddc53091b4dadb15169",
+    ["resource/Leone Menu/skins/295.png"] = "973e098783ec4c5c879c796098e6ec78a7f2afa8c9eb5cbb75763aef160bde70",
+    ["resource/Leone Menu/skins/296.png"] = "61e4d763987e65d43bfeaa1b3e96ccd91953cc6f7ad8e5e77082cce8f4a288dd",
+    ["resource/Leone Menu/skins/297.png"] = "13d7d270122a65634a932003bf95ecf2997a37cb1f2a2150055c7361dde8eaf2",
+    ["resource/Leone Menu/skins/298.png"] = "d682e10ec11c807f039597e061c019900bb4642d1042b3b97a2ad8f861ec12e0",
+    ["resource/Leone Menu/skins/299.png"] = "0ea8a06467beef07d27b3a14bab4e28e0414ff9bb31f7b2229fde9944eb0cce8",
+    ["resource/Leone Menu/skins/3.png"] = "7173eae56db88f6f3c786ae8e22fb7fcf9f5ea7c60b1d8ac55ab7bd5a839974f",
+    ["resource/Leone Menu/skins/30.png"] = "1c8b197b254fb1b288716f55752cb282d1b310da64473f0dd58a1b083ef57053",
+    ["resource/Leone Menu/skins/31.png"] = "b7806c529719a4ccfa59e5d4fe8926fe9aeb74e5c08f9f7dbc17cf9a9601b819",
+    ["resource/Leone Menu/skins/32.png"] = "1cb14edc6558864c924f653572e02eedc26db8ed99896d7158e77cd66b461c82",
+    ["resource/Leone Menu/skins/33.png"] = "fabd2ba7d7e0ceb33a1c8f4f43f7dee516206339a1995d6c610c8f8ef660813a",
+    ["resource/Leone Menu/skins/34.png"] = "5cd29be82399703cd8c046f09a8bee9cbaa0ca1f6f7d33c4f23a77c01a8f21e9",
+    ["resource/Leone Menu/skins/35.png"] = "73f79ca345f9a62bf6a0c95a158a03b17fe933ffc238da2c61b03bb8f0f703e6",
+    ["resource/Leone Menu/skins/36.png"] = "240aeb4a925c752f21983adfa6fc6acb52905f9e690d503cbc346809292b3ab1",
+    ["resource/Leone Menu/skins/37.png"] = "bb82e47e307b8bfd6d08bf329b0e98e5eadc13fef87f43ec5f365b822b0c6f0c",
+    ["resource/Leone Menu/skins/38.png"] = "6cd9602e9d2e954d862066637f4fd6eab24b4afa7afaeb108b7a70c4e290b86a",
+    ["resource/Leone Menu/skins/39.png"] = "489baa0379d9b70d375fb77447bd0f8c96279fdbd877b2920d2d4277db79b244",
+    ["resource/Leone Menu/skins/4.png"] = "09f6d1056aeef19a2fe8046b471f83e3e9b8ba348504de8eb8f101ddc599c7ab",
+    ["resource/Leone Menu/skins/40.png"] = "bb39014d9ff900392290da46b669029b0bb17b1f24c7fd06622c937e02d4ff5f",
+    ["resource/Leone Menu/skins/41.png"] = "d784553595b3dd2dc7f3d8d066c872b8a04c7a490353f2bcb08e2b98bb1a02cd",
+    ["resource/Leone Menu/skins/42.png"] = "e05438f4e419a3e95af1b5e614e253b2776759e6ae0aa1cbff19a2e211dd1569",
+    ["resource/Leone Menu/skins/43.png"] = "125fbce82e588b9f5f3653ee8afc3b53684df823ebcbe9e77fc50277b63e1c73",
+    ["resource/Leone Menu/skins/44.png"] = "d6eb9738380b3244d66b25692f15a09e619feebe9c96468095f02daa65919b80",
+    ["resource/Leone Menu/skins/45.png"] = "2b4f47f47cb9c3e299df7e138e5f1b4c6956c0b723cff072c647c608637dd043",
+    ["resource/Leone Menu/skins/46.png"] = "7acf08b27e1d722b392ce261790b0d9480aac30985ce353a56c31b3bf6aabddd",
+    ["resource/Leone Menu/skins/47.png"] = "8aea80e66925ee76ff781e9cef4faab140b82cfa5932301116e4e7b301c4372b",
+    ["resource/Leone Menu/skins/48.png"] = "c64cf328ad30f071799ca713ac2774d2e14caaa9cba51bfd48290ee77daf2f6e",
+    ["resource/Leone Menu/skins/49.png"] = "a084a114b4a57c269953ad35699e821a296930f7727c554be1bf5e5ce3c51771",
+    ["resource/Leone Menu/skins/5.png"] = "7b0adb1b746bc8b42bb0d9aeae19c56fad263158c6f9ba2956bbe35f9042e180",
+    ["resource/Leone Menu/skins/50.png"] = "f8a97a81a289669972b36e0c170b85fff5f4d812f8dd5aa77df9f32ff353eca6",
+    ["resource/Leone Menu/skins/51.png"] = "7cd0d75d7c54e51843b13be0ced2bf568f238d2b88d234addacc1689e8165270",
+    ["resource/Leone Menu/skins/52.png"] = "df531d021d9d74d27d8787933c1a88f1f551e570a15cf3e9fe96bceedbff4df5",
+    ["resource/Leone Menu/skins/53.png"] = "79ed80f7d4fca74c9e4c52d531a6800091da8520c0a69aae0ca8950634b8f42f",
+    ["resource/Leone Menu/skins/54.png"] = "5c5e96d424b9f22bca7049b45f11069d95fa8e97194de58369792dce863f8a78",
+    ["resource/Leone Menu/skins/55.png"] = "32f0528e8a20919cd9b18c6bf575289acceb645d43c486d9359cbd082d9b81f7",
+    ["resource/Leone Menu/skins/56.png"] = "4d15f62c336f27b2e21233f8f150fbc367cda8b288f69b104db82a2fd295396c",
+    ["resource/Leone Menu/skins/57.png"] = "a3599620e4e220008cfdddd029f827c2bdd2784a36e2acb5ec5c56dd8852eef1",
+    ["resource/Leone Menu/skins/58.png"] = "5bb8954782ae31ef41ca74f137e31833e48e1b5aaaa19112ca62bda0b2c0bf66",
+    ["resource/Leone Menu/skins/59.png"] = "861879e7e7c2c3164d8478a6243f9337bbbb0d00bffc0a57f408015944d26af8",
+    ["resource/Leone Menu/skins/6.png"] = "72cb660c453f5b3e6b791efa3cc821300c8e400d5f7c6fdf87f3ba811ec6688c",
+    ["resource/Leone Menu/skins/60.png"] = "485174d250898be17ddb659c2bb64de8b676276c7424e9eaa48db2ba86b84e36",
+    ["resource/Leone Menu/skins/61.png"] = "dea99995096bdda3b123538ab311bb6ca0726daf929070af1cf4d7b4ceb45971",
+    ["resource/Leone Menu/skins/62.png"] = "35ca7ea2ff430eeef4ade2e11428b108d07584faf3ab2abd69d0c75b192e6f68",
+    ["resource/Leone Menu/skins/63.png"] = "a7b047043a3f278b463623ef379360d702446d900d22257844937373ca76c369",
+    ["resource/Leone Menu/skins/64.png"] = "d3f8eeb0217f6739014c295c2cd0d05abc27667f16621288e833128b9bd8a66d",
+    ["resource/Leone Menu/skins/65.png"] = "22fb6e454918e776cb0242b2e0fb78f7881acee05a160533ffb7b79cf0f3b291",
+    ["resource/Leone Menu/skins/66.png"] = "87fb87fc55d87ca53bf3aa9acc4537fcf5b3e34a08959f2c4206159c565a1db4",
+    ["resource/Leone Menu/skins/67.png"] = "d65dd57d1c898c163ed856b8ea9292a6811e0f1b49a88c7c2482373b5f1e66a3",
+    ["resource/Leone Menu/skins/68.png"] = "f278c3f18dc95523f0e3f46baa30d89365c9c6bed1dab247f674b1688cdf6f5c",
+    ["resource/Leone Menu/skins/69.png"] = "ec427ad2d714d22f5d38a20bfe2c0fa2c1bb2193e89b89b883f6a741a3fd73d5",
+    ["resource/Leone Menu/skins/7.png"] = "1fea278fac2cbb4d7d63fd7db98fe46ad75979e55b81587860a7adc9bcd4768b",
+    ["resource/Leone Menu/skins/70.png"] = "fdbbee8054af3a7ee70f6c459948756271508ff28ec33eb7c2ccdadd4461113f",
+    ["resource/Leone Menu/skins/71.png"] = "5a6c037913b86b3a6e20847e43411a1c3fafe13b1947a252ff4686102a47b18c",
+    ["resource/Leone Menu/skins/72.png"] = "f639c30d2ca0308b3b0d2525800b497ac166fb114530e88c8cf260cc355db5c7",
+    ["resource/Leone Menu/skins/73.png"] = "55ec3e928be7142f65d493f4f50622c1ce85dcf1ca193e210415d4f7be81bb33",
+    ["resource/Leone Menu/skins/75.png"] = "9c93f46996fa0edbfbac1569d3594abd20815e65ebe09bff8b16db03c5b1d245",
+    ["resource/Leone Menu/skins/76.png"] = "e56a155b99183487da45c5917d6afab3ec1753621fed2e898e0ef4cd16388578",
+    ["resource/Leone Menu/skins/77.png"] = "ea9fb066e64ee7d6160eead4f92dd6ea4d9791831e5c3959300968f190e61b6c",
+    ["resource/Leone Menu/skins/78.png"] = "7b6933cc8d0ca9becc66d17c2e3ee7a77147165e56069684755a8d9e9d7aefae",
+    ["resource/Leone Menu/skins/79.png"] = "f07163f2ad8477d0ef93a9cdc2b59ad2649644124585286fe073aa5919dd6c4d",
+    ["resource/Leone Menu/skins/8.png"] = "941e03be81e3216f377472c8ebcd0bb2a5a9670772cbc2cb3bdbfc44eb62d8f9",
+    ["resource/Leone Menu/skins/80.png"] = "b3e82e3d8aa80ed73a0aae2ebee4ec196101d7463922200e620311b4f4adc5a3",
+    ["resource/Leone Menu/skins/81.png"] = "8b849fba22ad0e379f36791f26422f2b3904d3c63e9ae29a87da8ae699473259",
+    ["resource/Leone Menu/skins/82.png"] = "1b94ff1f6452d3be995649a4ed9f01ae5f68cf87d15bcd18438147952e326842",
+    ["resource/Leone Menu/skins/83.png"] = "53056ab9aa10ceaf6d23b2f5c6994a1197ce6c8458c688ea143412de86bd4d72",
+    ["resource/Leone Menu/skins/84.png"] = "9219beced28aa2f376191dc054f2b6da650964ee7d34ce5a3d968620c9a1ef3f",
+    ["resource/Leone Menu/skins/85.png"] = "85884dba2d6a5f758bbe843b15d5d2b5b79e5f7778f6b46bc0ad30027baef2d4",
+    ["resource/Leone Menu/skins/86.png"] = "2d7f46904312ee0fc055f107990cc11637b2f4b9d4479ba5ff93320316472e0c",
+    ["resource/Leone Menu/skins/87.png"] = "b2ffcbb770d663ff9c97647ca7837b7d78e7547130c53f11fc1f5de53a09f277",
+    ["resource/Leone Menu/skins/88.png"] = "508869349c0ac6264d9f3a6349160a1afa2481d8a687ef0ab545672ff4b8866c",
+    ["resource/Leone Menu/skins/89.png"] = "9bbdbe99128e4f72ab9c8cb479e342d43baa1914d7c29d7b53934345f299b63b",
+    ["resource/Leone Menu/skins/9.png"] = "486c6a61c4bc7baa9ac7ccb37c9f0d51a980e762e1d128efb4c2048f987701a7",
+    ["resource/Leone Menu/skins/90.png"] = "4949e397eecd8e37fe8527ace268af163d7ae00c991311f2bbc0950dc0f55901",
+    ["resource/Leone Menu/skins/91.png"] = "fbdf4d6b38efcb4a9121d64ac601010d0eebe7dcde3270520781811f1689171d",
+    ["resource/Leone Menu/skins/92.png"] = "15caa444b09b18e9b772b92f93ccfee04cf05d47d3fb6dc34a6669eb0827dbee",
+    ["resource/Leone Menu/skins/93.png"] = "47a56ee304cfcaec4871d1ad8c58e0f67bfa6461f837ecaeb20d721e3a4c2ffc",
+    ["resource/Leone Menu/skins/94.png"] = "a3a48d2eb11bb4512df946d51192166ab34048c2ac68e3101a228996083a01cb",
+    ["resource/Leone Menu/skins/95.png"] = "171ba7216e7351f86f6750a89c39f1f028ba4a487338b2221083624f853f0204",
+    ["resource/Leone Menu/skins/96.png"] = "d2fac26595d8f1a7e94856e3e90cb8b375798905e2d2b486040b7a1a9d83139d",
+    ["resource/Leone Menu/skins/97.png"] = "44278857f7054add79fd9cb9c70b3628f34cb8d682d681f4d11acd430ba71881",
+    ["resource/Leone Menu/skins/98.png"] = "3786ceb48ef069801e3797bb970e7b1095efa82bd24ed5398ac98c8ee6acdebd",
+    ["resource/Leone Menu/skins/99.png"] = "ae10aefb34af9f93f1a4e71440f175ff0e532b3f8edef47bece75ff69a6f7d7d",
+    ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
+})
+if not ready then
+    package_check.recover("1.0.0", "97e1f959092a258b832bc7f5825b0063c5845804f9b53d07956c096ccec79079", mismatch)
+    return
+end
 return require('src.main')

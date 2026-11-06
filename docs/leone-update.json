@@ -1,6 +1,7 @@
 {
-  "version": "1.0.0-test.16",
+  "version": "1.0.0",
   "runtime": 5,
+  "package": "97e1f959092a258b832bc7f5825b0063c5845804f9b53d07956c096ccec79079",
   "url": "https://garries420.github.io/LeoneMenu/LeoneMenu.lua",
-  "sha256": "355a3c651e4bd2c3117723ca6e5976aa7e4fe08def263d688ba58d9abc297503"
+  "sha256": "ab66fb91872bf4fd68d155613145f79151e3ed8559e56ec2bbd0b6f4cac961ca"
 }
