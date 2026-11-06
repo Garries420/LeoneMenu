@@ -3,7 +3,7 @@ local fa=require('fAwesome7')
 local H=require('src.ui.Helpers')
 local U=require('src.core.Updates')
 local MainWindow=require('src.ui.MainWindow')
-local Home={reload_requested=false}
+local Home={reload_requested=false,update_check_requested=false}
 function Home:register()
     MainWindow:add_page('home',{title='Home',icon=fa('HOUSE'),order=0,render_function=function()
         imgui.Heading('Leone Menu')
@@ -21,7 +21,7 @@ function Home:register()
             Home.reload_requested=true
         end
         imgui.SameLine()
-        if imgui.AnimButton('Check for updates') then U.check_menu(true);U.check_skins(true) end
+        if imgui.AnimButton('Check for updates') then Home.update_check_requested=true end
         imgui.TextWrapped(U.status)
         imgui.TextWrapped(U.skins_status)
         imgui.Text('Version Date: '..(U.alliance.date or 'Unavailable'))

@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.4")
+script_version("1.0.5")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -542,14 +542,14 @@ imgui.OnInitialize(function()
     imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85('solid'), font_size, icon_config)
 end)
 
+local saved_for_reload=false
 function save_config()
+    if saved_for_reload then return end
     for _, pair in ipairs(components) do
         local component = pair.component
 
         if component and component.save_config then
-            local success, err = pcall(function()
-                component:save_config()
-            end)
+            local success, err = pcall(component.save_config, component)
             if not success then
                 print("Failed to save component config:", err)
             end
@@ -580,18 +580,23 @@ function main()
     while true do
         local reload=Home.reload_requested
         if reload and can_reload(reload) then
-            require('src.ui.MainWindow'):hide()
+            require('src.ui.MainWindow'):hide(false)
             wait(0) -- Let the render and input callbacks finish before teardown.
             if can_reload(reload) then
                 print('Leone Menu reload requested. Releasing the menu renderer.')
-                Extras:stop_startup_audio()
                 save_config()
+                saved_for_reload=true -- The termination callback must not save the same settings again.
+                Extras:stop_startup_audio()
                 imgui.ShutdownRenderer()
                 if reload=='update' then msg(Updates.status..'. Reloading...') end
                 print('Renderer closed. Reloading Leone Menu.')
                 thisScript():reload()
                 return
             end
+        elseif Home.update_check_requested and not reload then
+            Home.update_check_requested=false
+            Updates.check_menu(true)
+            Updates.check_skins(true)
         end
         if os.time()-last_save>=30 then save_config();last_save=os.time() end
         shared.hotkey_manager:update()

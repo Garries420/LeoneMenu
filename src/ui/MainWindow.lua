@@ -281,9 +281,9 @@ function MainWindow:show(shortcut)
     _main_window.is_open[0] = true
 end
 
-function MainWindow:hide()
+function MainWindow:hide(persist)
     _main_window.is_open[0] = false
-    save_config()
+    if persist~=false then save_config() end
 end
 
 _register()
