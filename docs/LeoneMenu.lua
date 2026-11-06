@@ -393,7 +393,7 @@ local function _process_aim_request()
     local x,y,z=getCharCoordinates(PLAYER_PED)
     local tx,ty,tz=getCharCoordinates(ped)
     cancel()
-    if not is_within_distance_3d(x,y,z,tx,ty,tz,6)then return end
+    if not is_within_distance_3d(x,y,z,tx,ty,tz,Player.VEST_RANGE)then return end
     _get_active_timer():set_temp_interval(3)
     sampSendChat(string.format('/guard %d 200',request.id))
 end
@@ -405,7 +405,7 @@ local function _find_closest_valid_player(attempt)
     end
 
     local local_pos_x, local_pos_y, local_pos_z = getCharCoordinates(PLAYER_PED)
-    local max_dist = 6
+    local max_dist = Player.VEST_RANGE
     local closest, retry = nil, nil
     local connected,local_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
 
@@ -687,7 +687,7 @@ function AutoVest:get_overlay_config()
 end
 
 function AutoVest:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function AutoVest:render_ui_settings()
@@ -699,7 +699,15 @@ function AutoVest:render_ui_settings()
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
         imgui.Text('Alliance skins to be vested');imgui.SameLine(width-290)
-        if imgui.AnimButton(fa('GEAR')) then Editor:show(_config.groups,function()self:save_config()end) end
+        if imgui.AnimButton(fa('GEAR')) then
+            Editor:show(_config.groups,function(groups)
+                local previous=_config.groups
+                _config.groups=groups
+                if self:save_config() then return true end
+                _config.groups=previous
+                return false
+            end)
+        end
         imgui.SameLine(width-250)
         imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
         if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
@@ -1725,6 +1733,7 @@ package.preload['src.components.Lawyer'] = function()
 local bit=require('bit')
 local fa=require('fAwesome7')
 local imgui=require('upmimgui')
+local Colors=require('src.core.Colors')
 local Config=require('src.core.Config')
 local H=require('src.ui.Helpers')
 local MainWindow=require('src.ui.MainWindow')
@@ -1742,6 +1751,8 @@ local labels={defend='Auto Lawyer',free='Auto Free'}
 local commands={defend='al',free='afree'}
 local last_targets,active={},{}
 local pending,wanted,last_mode
+local wanted_cache,next_wanted_at,manual_wanted_until=nil,0,0
+local WANTED_REPLY_SECONDS=4
 local cooldown_until=0
 local attempted_until=0
 
@@ -1792,8 +1803,8 @@ local function send(mode,target,hotkey)
     sampSendChat(('/%s %d%s'):format(mode,target.id,mode=='defend' and ' 200' or ''))
 end
 
-local function nearby(filter)
-    return Player:get_closest_player_id(7,{function(id,ped)
+local function nearby(filter,range)
+    return Player:get_closest_player_id(range or 7,{function(id,ped)
         return ped~=PLAYER_PED and doesCharExist(ped) and sampIsPlayerConnected(id) and filter(id,ped)
     end})
 end
@@ -1813,41 +1824,63 @@ local function choose_nearby(mode,suspects)
     local found,id=nearby(function(id,ped)
         if mode=='free' then return getCharModel(ped)==50 end
         return suspects[id]==plain_name(sampGetPlayerNickname(id)):lower()
-    end)
+    end,mode=='free' and Player.VEST_RANGE or nil)
     if found then send(mode,snapshot(id),true)
     else notify(mode=='free' and 'No nearby prisoner found.' or 'No nearby wanted player found.') end
 end
 
 local function nearest(mode)
     if remaining()>0 then notify('Lawyer CD: '..seconds_text(remaining()));return end
-    if wanted and os.clock()<wanted.expires then return end
+    local now=os.clock()
+    if wanted and now<=wanted.expires then return end
     if mode=='free' then choose_nearby(mode);return end
-    wanted={expires=os.clock()+4}
-    sampSendChat('/wanted')
+    if now<manual_wanted_until then return end
+    if now<next_wanted_at then
+        if wanted_cache then choose_nearby(mode,wanted_cache) end
+        return
+    end
+    wanted_cache=nil
+    next_wanted_at=now+cooldown()
+    wanted={expires=now+WANTED_REPLY_SECONDS}
+    samp_send_hidden_command('wanted')
 end
 
-local function handle_chat(text)
+local function handle_wanted_reply(color,text)
+    if not wanted or os.clock()>wanted.expires then return end
+    if color==Colors.ORANGE and text=='__________WANTED LIST__________' then
+        wanted.suspects={}
+        return false
+    end
+    if color==Colors.WHITE then
+        local name,id=text:match('^(.-) %((%d+)%)%:%s*%d+ outstanding charges?%.$')
+        if id and wanted.suspects then
+            wanted.suspects[tonumber(id)]=plain_name(name):lower()
+            return false
+        end
+    end
+    if color==Colors.WHITE and text=='No current wanted suspects.' then
+        wanted_cache={}
+    elseif color==Colors.ORANGE and text=='________________________________' and wanted.suspects then
+        wanted_cache=wanted.suspects
+    else
+        return
+    end
+    wanted=nil
+    if remaining()==0 and playable() then choose_nearby('defend',wanted_cache) end
+    return false
+end
+
+local function handle_chat(color,text)
     if (text=='You are not a Lawyer!' and (next(active) or wanted or os.clock()<attempted_until))
         or (wanted and os.clock()<=wanted.expires and text=="You're not a Lawyer / Cop / FBI!") then
         active={}
         pending,wanted=nil,nil
+        wanted_cache=nil
         attempted_until,cooldown_until=0,0
         msg("You're not a {00FF00}lawyer{FFFFFF}, go get the job at {00FF00}Downtown Los Santos")
         return false
     end
-    if wanted and os.clock()<=wanted.expires then
-        if text=='__________WANTED LIST__________' then
-            wanted.suspects={}
-        elseif wanted.suspects then
-            local name,id=text:match('^(.-) %((%d+)%)%:%s*%d+ outstanding charges?%.$')
-            if id then wanted.suspects[tonumber(id)]=plain_name(name):lower() end
-            if text=='________________________________' or text=='No current wanted suspects.' then
-                local suspects=wanted.suspects
-                wanted=nil
-                if remaining()==0 and playable() then choose_nearby('defend',suspects) end
-            end
-        end
-    end
+    if handle_wanted_reply(color,text)==false then return false end
     if not pending or os.clock()>pending.expires then return end
     local name
     if pending.mode=='defend' then
@@ -1878,13 +1911,20 @@ function Lawyer:register()
         sampRegisterChatCommand(command,function(args) toggle(bound,args) end)
         shared.hotkey_manager:register('lawyer_'..bound,cfg[bound].keys,function() nearest(bound) end)
     end
-    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
-        return (wanted or pending or next(active) or os.clock()<attempted_until) and {Rules.trim(Rules.strip(text))}
+    shared.event_handler:register('SERVER_MESSAGE',function(color,text)
+        return (wanted or pending or next(active) or os.clock()<attempted_until) and {color,Rules.trim(Rules.strip(text))}
     end,handle_chat)
     shared.event_handler:register('SEND_COMMAND',function(command)
         local name=command:match('^/(%S+)')
         return name and (name:lower()=='defend' or name:lower()=='free')
     end,function() attempted_until=os.clock()+10 end)
+    shared.event_handler:register('SEND_COMMAND',function(command)
+        return Rules.trim(command):lower()=='/wanted' and is_command_self_sent('wanted')
+    end,function()
+        -- The server provides no request ID. Give manual output priority when requests overlap.
+        wanted=nil
+        manual_wanted_until=os.clock()+WANTED_REPLY_SECONDS
+    end)
     shared.event_handler:register('PED_TICK',function() return next(active)~=nil or wanted~=nil or pending~=nil end,function()
         local now=os.clock()
         if wanted and now>wanted.expires then wanted=nil;notify('Could not read the HZG wanted list.') end
@@ -2101,6 +2141,23 @@ local function resolve_beacons_in_text(text, color)
     return text
 end
 
+local function add_chat_player_id(text)
+    local position,name=text:match('^%*%* %(%d+%) [^:]- %b() ()([^:]+): .* %*%*%s*$')
+    local advertisement=not name and text:sub(1,14)=='Advertisement:'
+    if advertisement then
+        name,position=text:match('^Advertisement:.*%- contact%s+([^(]-)()%s*%(')
+        if not name then name,position=text:match('^Advertisement:.*%- contact%s+(.-)()%s*$') end
+    end
+    if not name then return text end
+
+    local id=Player:get_player_id_by_name(Rules.trim(Rules.strip(name)):gsub('%s+','_'))
+    if not id or id<0 then return text end
+
+    local label=advertisement and (' [%d]'):format(id) or ('[%d] '):format(id)
+    if #text+#label>144 then return text end
+    return text:sub(1,position-1)..label..text:sub(position)
+end
+
 local function _register_event_handlers()
 
     shared.event_handler:register(
@@ -2192,24 +2249,18 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
+        function() return true end,
         function(color, text)
+            local updated=add_chat_player_id(text)
             if _config.beacon_resolver.enabled[0] then
-                return { color, text }
+                local last_hex_color
+                for hex_color in text:gmatch("{%x%x%x%x%x%x}") do
+                    last_hex_color = hex_color
+                end
+                local normal_color = last_hex_color or string.format("{%06X}", bit.rshift(color, 8))
+                updated = resolve_beacons_in_text(updated, normal_color)
             end
-
-            return false
-        end,
-        function(color, text)
-
-            local last_hex_color
-            for hex_color in text:gmatch("{%x%x%x%x%x%x}") do
-                last_hex_color = hex_color
-            end
-            local normal_color = last_hex_color or string.format("{%06X}", bit.rshift(color, 8))
-
-            text = resolve_beacons_in_text(text, normal_color)
-
-            return { color, text }
+            if updated~=text then return { color, updated } end
         end
     )
 
@@ -5192,7 +5243,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.3',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.4',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5281,7 +5332,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.3")
+script_version("1.0.4")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -6132,10 +6183,15 @@ local H=require('src.ui.Helpers')
 local R=require('src.core.Rules')
 local Import=require('src.core.GangImport')
 local Picker=require('src.ui.SkinPicker')
-local E={name='',hex='1E3348',skins=''}
+local E={}
+local function clear_fields(editor)
+    editor.name='';editor.hex='';editor.skins='';editor.index=nil;editor.error=nil
+end
 function E:show(groups,on_save)
-    self.groups=groups;self.on_save=on_save;self.open=true
-    self.name='';self.hex='1E3348';self.skins='';self.index=nil;self.error=nil
+    self.groups={}
+    for i,g in ipairs(groups)do self.groups[i]=g end
+    self.on_save=on_save;self.open=true
+    clear_fields(self)
 end
 local function color(hex)
     local n=tonumber(hex,16) or 0
@@ -6175,13 +6231,24 @@ function E:render()
     imgui.SameLine();imgui.ColorButton('##color_preview',color(self.hex))
     imgui.Text('Skins (ID)');self.skins=H.input('##gang_skins',self.skins,'1, 2, 3, 10, 11, 22, 35',field_width,2048)
     if imgui.IsItemHovered()then imgui.SetTooltip('Format: 1, 2, 3, 10, 11, 22, 35')end
+    if imgui.AnimButton('Add')then
+        local name=R.trim(self.name)
+        local ids=R.skins(self.skins)
+        if name=='' or not self.hex:match('^%x%x%x%x%x%x$') or not ids then
+            self.error='Enter a name, six HEX digits and valid skin IDs.'
+        else
+            self.groups[self.index or (#self.groups+1)]={name=name,hex=self.hex:upper(),skins=ids}
+            clear_fields(self)
+        end
+    end
     if self.error then imgui.TextWrapped(self.error)end
     if #self.groups>0 then
-        imgui.Separator();imgui.Text('Saved groups')
+        imgui.Separator();imgui.Text('Groups')
         for i,g in ipairs(self.groups)do
             imgui.PushID(i)
             if imgui.AnimButton(fa('TRASH')..'##remove')then
-                table.remove(self.groups,i);self.index=nil;self.on_save()
+                table.remove(self.groups,i)
+                clear_fields(self)
             else
                 imgui.SameLine()
                 if imgui.Selectable(g.name,false,imgui.SelectableFlags.NoAutoClosePopups)then
@@ -6195,13 +6262,8 @@ function E:render()
     imgui.Separator()
     local button_width=math.min(150,(imgui.GetContentRegionAvail().x-12)/2)
     if imgui.AnimButton('Save',imgui.ImVec2(button_width,38))then
-        local ids=R.skins(self.skins)
-        if R.trim(self.name)=='' or not self.hex:match('^%x%x%x%x%x%x$') or not ids then
-            self.error='Enter a name, six HEX digits and valid skin IDs.'
-        else
-            local g={name=R.trim(self.name),hex=self.hex:upper(),skins=ids}
-            self.groups[self.index or (#self.groups+1)]=g;self.on_save();imgui.CloseCurrentPopup()
-        end
+        if self.on_save(self.groups) then imgui.CloseCurrentPopup()
+        else self.error='Could not save groups. Please try again.' end
     end
     imgui.SameLine();if imgui.AnimButton('Cancel',imgui.ImVec2(button_width,38))then imgui.CloseCurrentPopup()end
     Picker:render()
@@ -8277,6 +8339,7 @@ package.preload['src.utils.Player'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\utils\Player.lua
 
 local Player = {}
+Player.VEST_RANGE = 6
 
 function Player:resolve_player_id(args,quiet)
     local players={}
@@ -8318,7 +8381,7 @@ function Player:get_closest_player_id(max_distance, filters)
                     local dz = pz - l_pz
                     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-                    if dist < closest_distance then
+                    if closest_id == nil or dist < closest_distance then
                         closest_id = i
                         closest_distance = dist
                     end
@@ -8330,9 +8393,9 @@ function Player:get_closest_player_id(max_distance, filters)
 end
 
 function Player:get_player_id_by_name(player_name)
-    local my_id = select(2, sampGetPlayerIdByCharHandle(PLAYER_PED))
+    local local_player, my_id = sampGetPlayerIdByCharHandle(PLAYER_PED)
 
-    if player_name == sampGetPlayerNickname(my_id) then
+    if local_player and player_name == sampGetPlayerNickname(my_id) then
         return my_id
     end
 
@@ -9137,7 +9200,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.3", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.4", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
