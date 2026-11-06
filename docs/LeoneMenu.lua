@@ -268,7 +268,7 @@ function AcceptVest:get_overlay_config()
 end
 
 function AcceptVest:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function AcceptVest:render_ui_settings()
@@ -820,7 +820,7 @@ function Backup:get_overlay_config()
 end
 
 function Backup:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Backup:render_ui_settings()
@@ -1099,7 +1099,7 @@ function E:register()
         function()stop(pending.phase=='await_confirmation' and 'Blackmarket purchase was not confirmed; purchase stopped.' or 'Blackmarket timed out; purchase stopped.')end)
     MainWindow:add_page('blackmarket',{title='Blackmarket',icon=fa('GUN'),render_function=function() E:render_ui_settings() end})
 end
-function E:save_config() Config.save(file,cfg) end
+function E:save_config() return Config.save(file,cfg) end
 function E:render_ui_settings()
     imgui.DrawChild('Blackmarket',function(width)
         imgui.Text('Select mode: /bms or /bms [Mode Number]')
@@ -1203,7 +1203,7 @@ function E:loaded()
     end)
 end
 function E:get_config() return cfg end
-function E:save_config() Config.save(file,cfg) end
+function E:save_config() return Config.save(file,cfg) end
 function E:render_frisk(width) H.bind('Aim and frisk a player','aim_frisk',cfg.frisk,width) end
 function E:render_repair(width) H.bind('Offer $1 repair to nearest driver or passenger','repair_nearest',cfg.repair,width) end
 function E:render_radio(width) H.toggle('Checks /fmotd for alliance frequency and changes freq','auto_freq',cfg.auto_freq,width,'Listens for /fmotd in chat to read the freq and auto swaps to the newest one, it does an automatic silent check every 5 minutes also') end
@@ -1330,7 +1330,7 @@ function F:register()
     end,function() return false end)
     MainWindow:add_page('find',{title='Autofind',icon=fa('LOCATION_DOT'),render_function=function() F:render_ui_settings() end})
 end
-function F:save_config() Config.save('config/Leone Menu/autofind.json',cfg) end
+function F:save_config() return Config.save('config/Leone Menu/autofind.json',cfg) end
 function F:render_ui_settings()
     imgui.DrawChild('Autofind',function(width)
         imgui.Text('Find Player:');imgui.Text('CMD: /af [Player ID / Name]');imgui.Separator()
@@ -1693,7 +1693,7 @@ function K:register()
     shared.hotkey_manager:register('custom_draft',{},function() end)
     MainWindow:add_page('keybinds',{title='Keybinds',icon=fa('KEYBOARD'),render_function=function() K:render_ui_settings() end})
 end
-function K:save_config() Config.save(file,cfg) end
+function K:save_config() return Config.save(file,cfg) end
 function K:render_ui_settings()
     imgui.Text('Keybinds:')
     local area=imgui.GetContentRegionAvail()
@@ -1947,7 +1947,7 @@ function Lawyer:register()
     overlay.allowed_colors={['28DC40']=true}
 end
 
-function Lawyer:save_config() Config.save(path,cfg) end
+function Lawyer:save_config() return Config.save(path,cfg) end
 
 function Lawyer:render()
     imgui.DrawChild('Lawyering',function(width)
@@ -2421,7 +2421,7 @@ function Misc:get_config()
 end
 
 function Misc:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Misc:render_portable_radio()
@@ -2768,7 +2768,7 @@ function PedCounter:get_overlay_config()
 end
 
 function PedCounter:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function PedCounter:render_ui_settings()
@@ -2879,7 +2879,7 @@ function P:register()
     shared.event_handler:register('PLAYER_QUIT',function(id) return pending and pending.id==id end,function() pending=nil;bad_player() end)
     require('src.ui.MainWindow'):add_page('phone',{title='Phone',icon=fa('MOBILE_SCREEN_BUTTON'),order=999,render_function=function() P:render_ui_settings() end})
 end
-function P:save_config() Config.save('config/Leone Menu/phone.json',cfg) end
+function P:save_config() return Config.save('config/Leone Menu/phone.json',cfg) end
 function P:render_ui_settings()
     imgui.DrawChild('Phone',function(width)
         H.toggle('Show Player ID','sms_id',cfg.show_id,width)
@@ -3253,7 +3253,7 @@ function Points:get_overlay_config()
 end
 
 function Points:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Points:render_ui_settings()
@@ -3711,7 +3711,7 @@ function Turfs:get_overlay_config()
 end
 
 function Turfs:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Turfs:render_ui_settings()
@@ -5243,10 +5243,11 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.5',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.6',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
+local staged,installed
 local initial={132,137,209,212,230,236,107,195,270,269,271,106,293,0,68,200,62,221,229,214,127,124,24,164,202,66,234,235,261,272,43,91,2,291,93,101,233,126,211}
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
@@ -5276,25 +5277,48 @@ function U.check_skins(manual)
         end):catch(unavailable)
     end):catch(unavailable)
 end
-local function install(manifest)
+local function download(manifest)
     U.status='Downloading version '..manifest.version
     Http:new('GET',menu_url,nil,30):then_(function(res)
         if res.status_code~=200 or #res.text<1000 or U.sha256(res.text)~=manifest.sha256:lower() then U.status='Update verification failed; current menu kept';return end
         local compiled=loadstring(res.text,'@LeoneMenu-update')
         if not compiled or not res.text:find('LEONE_MENU_BUNDLE',1,true) then U.status='Invalid update; current menu kept';return end
-        local target=thisScript().path
-        local old=Config.read(target)
-        if not old then U.status='Could not read current script';return end
-        local ok=Config.write('config/Leone Menu/LeoneMenu.previous.lua',old)
-        if not ok then U.status='Could not save rollback copy';return end
-        ok=Config.write(target,res.text)
-        if not ok then U.status='Could not replace script; current menu kept';return end
-        U.status='Installed Leone Menu '..manifest.version
+        staged={version=manifest.version,text=res.text}
+        U.status='Verified Leone Menu '..staged.version..'; waiting to reload'
         require('src.components.Home').reload_requested='update'
     end):catch(function() U.status='Update download failed; current menu kept' end):finally(function() U.busy=false end)
 end
+
+function U.cancel_install(status)
+    staged=nil
+    U.status=status
+end
+
+local function replace_script(text)
+    local target=thisScript().path
+    local old=Config.read(target)
+    if not old then return false,'Could not read current script' end
+    if not Config.write('config/Leone Menu/LeoneMenu.previous.lua',old) then return false,'Could not save rollback copy' end
+    if not Config.write(target,text) then return false,'Could not replace script; current menu kept' end
+    return true
+end
+
+function U.install_staged()
+    local update=staged
+    if not update then return false end
+    local ok,replaced,why=pcall(replace_script,update.text)
+    if not ok then print('[Leone Menu] Update file replacement failed: '..tostring(replaced)) end
+    if not ok or not replaced then
+        U.cancel_install(why or 'Could not install the update; current menu kept')
+        return false
+    end
+    U.cancel_install('Installed Leone Menu '..update.version)
+    installed=true
+    return true
+end
+
 function U.check_menu(manual)
-    if U.busy then return end
+    if U.busy or staged or installed then return end
     U.busy=true;U.status='Checking for updates...'
     Http:new('GET',base..'leone-update.json',nil,20):then_(function(res)
         local m=res.status_code==200 and json.decode(res.text)
@@ -5304,7 +5328,7 @@ function U.check_menu(manual)
             or not m.sha256:match('^%x+$') or #m.sha256~=64 or m.url~=menu_url then
             U.status='Could not verify the update feed; keeping '..U.version;U.busy=false
         elseif not R.newer(m.version,U.version) then U.status='Leone Menu is up to date ('..U.version..')';U.busy=false
-        else install(m) end
+        else download(m) end
         if manual then msg(U.status) end
     end):catch(function() U.status='Could not check updates; menu works offline';U.busy=false end)
 end
@@ -5332,7 +5356,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.5")
+script_version("1.0.6")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5873,17 +5897,20 @@ end)
 
 local saved_for_reload=false
 function save_config()
-    if saved_for_reload then return end
+    if saved_for_reload then return true end
+    local saved=true
     for _, pair in ipairs(components) do
         local component = pair.component
 
         if component and component.save_config then
-            local success, err = pcall(component.save_config, component)
-            if not success then
-                print("Failed to save component config:", err)
+            local ok, result, err = pcall(component.save_config, component)
+            if not ok or result==false then
+                saved=false
+                print('Failed to save component config:', ok and err or result)
             end
         end
     end
+    return saved
 end
 
 function main()
@@ -5909,18 +5936,38 @@ function main()
     while true do
         local reload=Home.reload_requested
         if reload and can_reload(reload) then
-            require('src.ui.MainWindow'):hide(false)
-            wait(0) -- Let the render and input callbacks finish before teardown.
-            if can_reload(reload) then
-                print('Leone Menu reload requested. Releasing the menu renderer.')
-                save_config()
-                saved_for_reload=true -- The termination callback must not save the same settings again.
-                Extras:stop_startup_audio()
-                imgui.ShutdownRenderer()
-                if reload=='update' then msg(Updates.status..'. Reloading...') end
-                print('Renderer closed. Reloading Leone Menu.')
-                thisScript():reload()
-                return
+            Home.reload_requested=false
+            local update=reload=='update'
+            local saved=save_config()
+            last_save=os.time()
+            if not saved then
+                local status='Could not save settings. Check for updates again to retry.'
+                if update then Updates.cancel_install(status) end
+                msg(update and status or 'Could not save settings. Reload canceled.')
+            else
+                local menu=require('src.ui.MainWindow')
+                local was_open=menu:is_open()
+                menu:hide(false)
+                wait(0) -- Settings are saved before the renderer or active Lua file is touched.
+                if not can_reload(reload) or menu:is_open() then
+                    Home.reload_requested=reload
+                elseif update and not Updates.install_staged() then
+                    if was_open then menu:show() end
+                    msg(Updates.status)
+                else
+                    saved_for_reload=true
+                    local ok,result=pcall(function()
+                        Extras:stop_startup_audio()
+                        imgui.ShutdownRenderer()
+                        if update then msg(Updates.status..'. Reloading...') end
+                        return thisScript():reload()
+                    end)
+                    if ok and result~=false then return end
+                    saved_for_reload=false
+                    print('[Leone Menu] Live reload did not complete: '..tostring(result))
+                    if update then Updates.status=Updates.status..'. Restart GTA to load it.' end
+                    msg(update and Updates.status or 'Could not reload Leone Menu. Restart GTA to reload it.')
+                end
             end
         elseif Home.update_check_requested and not reload then
             Home.update_check_requested=false
@@ -9205,7 +9252,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.5", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.6", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
