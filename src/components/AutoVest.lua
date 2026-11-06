@@ -114,14 +114,11 @@ local function _find_closest_valid_player()
 
     local local_pos_x, local_pos_y, local_pos_z = getCharCoordinates(PLAYER_PED)
     local max_dist = 6
-    local closest = nil
+    local closest, retry = nil, nil
+    local connected,local_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
 
     local function is_valid_player(player, id)
-        local name = sampGetPlayerNickname(id)
-
-        if not name:find("_") then
-            return false
-        end
+        if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player) then return false end
 
         local skin=getCharModel(player)
         local match=_config.vester_mode[0]==VESTER_MODE.AUTOMATIC and Updates.is_alliance(skin)
@@ -132,9 +129,8 @@ local function _find_closest_valid_player()
         end
         if not match then return false end
 
-        if sampIsPlayerPaused(id) or isCharPlayingAnim(player, "KILL_Knife_Ped_Die") then
-            return false
-        end
+        local health=sampGetPlayerHealth(id)
+        if health<=0 then return false end
 
         local armor = sampGetPlayerArmor(id)
         if armor > _config.offer_if_armor_below[0] then
@@ -150,7 +146,7 @@ local function _find_closest_valid_player()
             player_id = id,
             distance = math.sqrt((x - local_pos_x) ^ 2 + (y - local_pos_y) ^ 2 + (z - local_pos_z) ^ 2),
             armor = armor,
-            health = sampGetPlayerHealth(id),
+            health = health,
             ped = player
         }
     end
@@ -163,7 +159,10 @@ local function _find_closest_valid_player()
                 local player_data = is_valid_player(ped, id)
 
                 if player_data then
-                    if not closest then
+                    local attempt=_auto_vest_state.unconfirmed
+                    if attempt and id==attempt.id and os.clock()<attempt.until_time then
+                        retry=player_data
+                    elseif not closest then
                         closest = player_data
                     else
                         local cmd_mode = _config.command_mode.current[0]
@@ -193,7 +192,7 @@ local function _find_closest_valid_player()
         end
     end
 
-    return closest
+    return closest or retry
 end
 
 local function _handle_ped_tick()
@@ -207,6 +206,9 @@ local function _handle_ped_tick()
     local cmd_mode = _config.command_mode.current[0]
     local command = cmd_mode == COMMAND_MODE.NORMAL and "guard" or "guardnear"
 
+    -- If the server does not confirm an offer, give another eligible player
+    -- the next attempt instead of repeatedly selecting the same one.
+    _auto_vest_state.unconfirmed={id=target.player_id,until_time=os.clock()+6}
     sampSendChat(string.format("/%s %d 200", command, target.player_id))
 end
 
@@ -224,11 +226,17 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color, text)
-            return color == Colors.GREY and text == "You are not a bodyguard."
+        function(_, text)
+            return Rules.trim(Rules.strip(text)) == "You are not a bodyguard."
         end,
         function()
             _auto_vest_state.timers[COMMAND_MODE.NORMAL]:pause()
+            local now=os.clock()
+            if not _auto_vest_state.last_job_warning or now-_auto_vest_state.last_job_warning>=5 then
+                _auto_vest_state.last_job_warning=now
+                -- Group the final highlights to keep the entire message within SA-MP's 144-byte limit.
+                sampAddChatMessage('[Leone Menu] {FFFFFF}You dont have {33CCFF}bodyguard job{FFFFFF}, switch to {33CCFF}DD mode in /leone or get to Ganton Gym and change job',0xFF1E3348)
+            end
         end
     )
 
@@ -244,6 +252,7 @@ local function _register_event_handlers()
             return false
         end,
         function(player_name)
+            _auto_vest_state.unconfirmed=nil
             _auto_vest_state.last_vest_recipient_name = player_name
             _auto_vest_state.pending={name=player_name,id=Player:get_player_id_by_name(player_name:gsub(" ","_")),price=200}
             local timer=_get_active_timer()

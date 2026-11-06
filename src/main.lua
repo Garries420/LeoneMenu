@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.1")
+script_version("1.0.2")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -189,6 +189,7 @@ local Equipment = require("src.components.Equipment")
 local Find = require("src.components.Find")
 local Fixes = require("src.components.Fixes")
 local Keybinds = require("src.components.Keybinds")
+local Lawyer = require("src.components.Lawyer")
 local Misc = require("src.components.Misc")
 local PedCounter = require("src.components.PedCounter")
 local Phone = require("src.components.Phone")
@@ -217,6 +218,7 @@ local components = {
     { component = Find,          overlay = nil },
     { component = Fixes,         overlay = nil },
     { component = Keybinds,      overlay = nil },
+    { component = Lawyer },
     { component = Misc,          overlay = nil },
     { component = PedCounter,    overlay = PedCounterOverlay },
     { component = Phone,         overlay = nil },

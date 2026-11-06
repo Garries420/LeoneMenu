@@ -11,6 +11,8 @@ local Colors = require("src.core.Colors")
 local MainWindow = require("src.ui.MainWindow")
 local Player = require("src.utils.Player")
 local shared = require("src.shared")
+local Rules = require('src.core.Rules')
+local FriskWarning = require('src.components.FriskWarning')
 
 local SPRUNK_WAIT_TIME = 0.050
 local SPECIAL_ACTION_DRINK_SPRUNK = 23
@@ -57,6 +59,31 @@ local _portable_radio = {
 local _sprunk_spam_state = {
     last = os.clock(),
 }
+
+local function holding_sprunk()
+    local ok,id=sampGetPlayerIdByCharHandle(PLAYER_PED)
+    return ok and sampGetPlayerSpecialAction(id)==SPECIAL_ACTION_DRINK_SPRUNK
+end
+
+local function handle_sprunk()
+    local state=_sprunk_spam_state
+    if not _config.sprunk_spam.enabled[0] or not holding_sprunk() then
+        state.full,state.removed=false,false
+        return
+    end
+    if sampIsChatInputActive() or sampIsDialogActive() or isPauseMenuActive() or MainWindow:is_open() then return end
+    local health=getCharHealth(PLAYER_PED)
+    if health>=5000000 then health=health-5000000 end
+    if state.full or health>=100 then
+        if not state.removed then
+            state.removed=true
+            setGameKeyState(keys.player.ENTERVEHICLE,255)
+        end
+    elseif not state.removed and os.clock()-state.last>=SPRUNK_WAIT_TIME then
+        setGameKeyState(keys.player.FIREWEAPON,255)
+        state.last=os.clock()
+    end
+end
 
 local _vehicle_storage_state = {
     selected_slot = 0,
@@ -215,37 +242,17 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "PED_TICK_ON_FOOT",
-        function(x, y, z)
-            if _config.sprunk_spam.enabled[0] and (getCharHealth(PLAYER_PED) - 5000000) ~= 100.0 then
-                local my_id = select(2, sampGetPlayerIdByCharHandle(PLAYER_PED))
-
-                if sampGetPlayerSpecialAction(my_id) == SPECIAL_ACTION_DRINK_SPRUNK then
-                    return true
-                end
-            end
-            return false
-        end,
-        function()
-            if os.clock() - _sprunk_spam_state.last >= SPRUNK_WAIT_TIME then
-                setGameKeyState(keys.player.FIREWEAPON, 255)
-                _sprunk_spam_state.last = os.clock()
-            end
-        end
+        function() return true end,
+        handle_sprunk
     )
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color, text)
-            if color == Colors.GRAD1 and _config.sniper_frisk_sound.enabled[0] and text == "Weapon: Sniper Rifle." then
-                return true
-            end
-            return false
+        function(_,text)
+            return _config.sprunk_spam.enabled[0] and Rules.trim(Rules.strip(text))=='You already have full health.'
+                and holding_sprunk()
         end,
-        function()
-            clearMissionAudio(1)
-            loadMissionAudio(1, 5205)
-            playMissionAudio(1)
-        end
+        function() _sprunk_spam_state.full=true end
     )
 
     shared.event_handler:register(
@@ -413,6 +420,7 @@ function Misc:register()
 
     _register_event_handlers()
     _register_commands()
+    FriskWarning.register(_config.sniper_frisk_sound.enabled)
 
     MainWindow:add_page("miscellaneous", {
         icon = fa("ELLIPSIS"),
@@ -519,11 +527,15 @@ function Misc:render_ui_settings()
     imgui.Dummy(imgui.ImVec2(0, 5))
     imgui.DrawChild("Frisking", function(width)
         imgui.Text("Play sound when frisking a player who has a sniper rifle")
-        imgui.SameLine(width - imgui.ToggleButtonWidth())
+        imgui.SameLine(width-imgui.ToggleButtonWidth()-85-imgui.GetStyle().ItemSpacing.x)
+        if imgui.AnimButton(fa('PLAY')..' Play##sniper_warning',imgui.ImVec2(85,0)) then FriskWarning.play() end
+        imgui.SameLine()
         imgui.ToggleButton("##sniper_frisk_sound", _config.sniper_frisk_sound.enabled)
         require("src.components.Extras"):render_frisk(width)
     end)
 
+    imgui.Dummy(imgui.ImVec2(0, 5))
+    require('src.components.Lawyer'):render()
     imgui.Dummy(imgui.ImVec2(0, 5))
     require("src.components.Extras"):render_random()
     require("src.components.Extras"):render_vehicles()

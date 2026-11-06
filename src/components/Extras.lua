@@ -81,11 +81,11 @@ function E:get_config() return cfg end
 function E:save_config() Config.save(file,cfg) end
 function E:render_frisk(width) H.bind('Aim and frisk a player','aim_frisk',cfg.frisk,width) end
 function E:render_repair(width) H.bind('Offer $1 repair to nearest driver or passenger','repair_nearest',cfg.repair,width) end
-function E:render_radio(width) H.toggle('Checks /fmotd for alliance frequency and changes freq','auto_freq',cfg.auto_freq,width,'Reads /stats only on the first manual enable. Remembers the confirmed frequency; listens to startup/manual MOTDs and checks /fmotd every 5 minutes.') end
+function E:render_radio(width) H.toggle('Checks /fmotd for alliance frequency and changes freq','auto_freq',cfg.auto_freq,width,'Listens for /fmotd in chat to read the freq and auto swaps to the newest one, it does an automatic silent check every 5 minutes also') end
 function E:render_random()
     imgui.DrawChild('Random',function(width)
         imgui.Text('Parachute')
-        H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,'Skips the parachute in the direction of your mouse wheel, Q or E, using your existing weapons. Shows parachute availability for 3 seconds with a 10 second cooldown. Selects and keeps the parachute while skydiving.')
+        H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,"Skips over the parachute to the next available weapon or fist, displays a small overlay to notify you that you got a parachute. the parachute appears again when you're falling")
         imgui.Text('Shortcuts');imgui.Text('/signcheck -> /si')
     end)
 end

@@ -32,7 +32,6 @@ local default_data = {
         { 0, 0, 0, 0.588 }
     ),
 }
-default_data.overlay.display_inside_interiors = imgui.new.bool(false)
 default_data.overlay.display_next_information = imgui.new.bool(true)
 default_data.overlay.display_war_information = imgui.new.bool(true)
 
@@ -404,6 +403,7 @@ end
 
 function Turfs:register()
     carboneum.load(CONFIG_PATH, _config)
+    _config.overlay.display_inside_interiors=nil
     -- Automatic captures require a fresh opt-in after each script load.
     _config.auto_capture[0] = false
 
@@ -440,11 +440,6 @@ function Turfs:render_ui_settings()
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##turfs_overlay_active_war", _config.overlay.display_war_information)
 
-        imgui.Separator()
-
-        imgui.Text("Enable overlay inside interiors")
-        imgui.SameLine(width - imgui.ToggleButtonWidth())
-        imgui.ToggleButton("##turfs_overlay_inside_interiors", _config.overlay.display_inside_interiors)
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))

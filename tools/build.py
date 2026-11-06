@@ -26,7 +26,7 @@ shutil.copy2(source/'upmimgui/cimguidx9.dll',private/'cimguidx9.dll')
 shutil.copytree(root/'assets'/'skins',assets/'skins',dirs_exist_ok=True)
 shutil.copytree(root/'assets'/'skin-overrides',assets/'skin-overrides',dirs_exist_ok=True)
 for name in ['leone-logo.png','tshirt.png']: shutil.copy2(root/'assets'/name,assets/name)
-shutil.copy2(root/'input'/'modloadedin.mp3',assets/'modloadedin.mp3')
+for name in ['modloadedin.mp3','Sniperwarning.mp3']: shutil.copy2(root/'input'/name,assets/name)
 (stage/'README.txt').write_text(
     f'Leone Menu V{version}\n\n'
     '1. Close GTA San Andreas.\n'

@@ -8,7 +8,7 @@ local Rules=require('src.core.Rules')
 local function create()
     local cfg=C:get_overlay_config()
     local active=C:get_active_turf()
-    local function visible()return (getActiveInterior()==0 or cfg.display_inside_interiors[0]) and ((not active.refresh_timer:is_paused() and cfg.display_war_information[0]) or (cfg.display_next_information[0] and C:get_next_turf()~=nil)) end
+    local function visible()return (not active.refresh_timer:is_paused() and cfg.display_war_information[0]) or (cfg.display_next_information[0] and C:get_next_turf()~=nil) end
     local overlay=Overlay.new(cfg,function()return Realign:is_preview('capture') or visible() end,function(self)
         if Realign:is_preview('capture') and not visible()then
             self:TextRGB(string.format('{FFFFFF}%s Turf Capper: {5CCCE6}Preview Family (Pershing Sq.) {FFFFFF}| Time Left: {5CCCE6}7 minutes',fa('SHIELD')))
