@@ -1638,7 +1638,7 @@ local fa=require('fAwesome7')
 local H=require('src.ui.Helpers')
 local U=require('src.core.Updates')
 local MainWindow=require('src.ui.MainWindow')
-local Home={reload_requested=false}
+local Home={reload_requested=false,update_check_requested=false}
 function Home:register()
     MainWindow:add_page('home',{title='Home',icon=fa('HOUSE'),order=0,render_function=function()
         imgui.Heading('Leone Menu')
@@ -1656,7 +1656,7 @@ function Home:register()
             Home.reload_requested=true
         end
         imgui.SameLine()
-        if imgui.AnimButton('Check for updates') then U.check_menu(true);U.check_skins(true) end
+        if imgui.AnimButton('Check for updates') then Home.update_check_requested=true end
         imgui.TextWrapped(U.status)
         imgui.TextWrapped(U.skins_status)
         imgui.Text('Version Date: '..(U.alliance.date or 'Unavailable'))
@@ -5243,7 +5243,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.4',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.5',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5332,7 +5332,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.4")
+script_version("1.0.5")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5871,14 +5871,14 @@ imgui.OnInitialize(function()
     imgui.GetIO().Fonts:AddFontFromMemoryCompressedBase85TTF(fa.get_font_data_base85('solid'), font_size, icon_config)
 end)
 
+local saved_for_reload=false
 function save_config()
+    if saved_for_reload then return end
     for _, pair in ipairs(components) do
         local component = pair.component
 
         if component and component.save_config then
-            local success, err = pcall(function()
-                component:save_config()
-            end)
+            local success, err = pcall(component.save_config, component)
             if not success then
                 print("Failed to save component config:", err)
             end
@@ -5909,18 +5909,23 @@ function main()
     while true do
         local reload=Home.reload_requested
         if reload and can_reload(reload) then
-            require('src.ui.MainWindow'):hide()
+            require('src.ui.MainWindow'):hide(false)
             wait(0) -- Let the render and input callbacks finish before teardown.
             if can_reload(reload) then
                 print('Leone Menu reload requested. Releasing the menu renderer.')
-                Extras:stop_startup_audio()
                 save_config()
+                saved_for_reload=true -- The termination callback must not save the same settings again.
+                Extras:stop_startup_audio()
                 imgui.ShutdownRenderer()
                 if reload=='update' then msg(Updates.status..'. Reloading...') end
                 print('Renderer closed. Reloading Leone Menu.')
                 thisScript():reload()
                 return
             end
+        elseif Home.update_check_requested and not reload then
+            Home.update_check_requested=false
+            Updates.check_menu(true)
+            Updates.check_skins(true)
         end
         if os.time()-last_save>=30 then save_config();last_save=os.time() end
         shared.hotkey_manager:update()
@@ -6682,9 +6687,9 @@ function MainWindow:show(shortcut)
     _main_window.is_open[0] = true
 end
 
-function MainWindow:hide()
+function MainWindow:hide(persist)
     _main_window.is_open[0] = false
-    save_config()
+    if persist~=false then save_config() end
 end
 
 _register()
@@ -9200,7 +9205,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.4", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.5", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
