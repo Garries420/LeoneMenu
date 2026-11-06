@@ -22,7 +22,7 @@ function K:register()
     shared.hotkey_manager:register('custom_draft',{},function() end)
     MainWindow:add_page('keybinds',{title='Keybinds',icon=fa('KEYBOARD'),render_function=function() K:render_ui_settings() end})
 end
-function K:save_config() Config.save(file,cfg) end
+function K:save_config() return Config.save(file,cfg) end
 function K:render_ui_settings()
     imgui.Text('Keybinds:')
     local area=imgui.GetContentRegionAvail()

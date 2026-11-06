@@ -83,7 +83,7 @@ function E:loaded()
     end)
 end
 function E:get_config() return cfg end
-function E:save_config() Config.save(file,cfg) end
+function E:save_config() return Config.save(file,cfg) end
 function E:render_frisk(width) H.bind('Aim and frisk a player','aim_frisk',cfg.frisk,width) end
 function E:render_repair(width) H.bind('Offer $1 repair to nearest driver or passenger','repair_nearest',cfg.repair,width) end
 function E:render_radio(width) H.toggle('Checks /fmotd for alliance frequency and changes freq','auto_freq',cfg.auto_freq,width,'Listens for /fmotd in chat to read the freq and auto swaps to the newest one, it does an automatic silent check every 5 minutes also') end

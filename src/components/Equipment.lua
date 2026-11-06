@@ -169,7 +169,7 @@ function E:register()
         function()stop(pending.phase=='await_confirmation' and 'Blackmarket purchase was not confirmed; purchase stopped.' or 'Blackmarket timed out; purchase stopped.')end)
     MainWindow:add_page('blackmarket',{title='Blackmarket',icon=fa('GUN'),render_function=function() E:render_ui_settings() end})
 end
-function E:save_config() Config.save(file,cfg) end
+function E:save_config() return Config.save(file,cfg) end
 function E:render_ui_settings()
     imgui.DrawChild('Blackmarket',function(width)
         imgui.Text('Select mode: /bms or /bms [Mode Number]')

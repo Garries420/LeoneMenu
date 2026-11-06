@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.5")
+script_version("1.0.6")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -544,17 +544,20 @@ end)
 
 local saved_for_reload=false
 function save_config()
-    if saved_for_reload then return end
+    if saved_for_reload then return true end
+    local saved=true
     for _, pair in ipairs(components) do
         local component = pair.component
 
         if component and component.save_config then
-            local success, err = pcall(component.save_config, component)
-            if not success then
-                print("Failed to save component config:", err)
+            local ok, result, err = pcall(component.save_config, component)
+            if not ok or result==false then
+                saved=false
+                print('Failed to save component config:', ok and err or result)
             end
         end
     end
+    return saved
 end
 
 function main()
@@ -580,18 +583,38 @@ function main()
     while true do
         local reload=Home.reload_requested
         if reload and can_reload(reload) then
-            require('src.ui.MainWindow'):hide(false)
-            wait(0) -- Let the render and input callbacks finish before teardown.
-            if can_reload(reload) then
-                print('Leone Menu reload requested. Releasing the menu renderer.')
-                save_config()
-                saved_for_reload=true -- The termination callback must not save the same settings again.
-                Extras:stop_startup_audio()
-                imgui.ShutdownRenderer()
-                if reload=='update' then msg(Updates.status..'. Reloading...') end
-                print('Renderer closed. Reloading Leone Menu.')
-                thisScript():reload()
-                return
+            Home.reload_requested=false
+            local update=reload=='update'
+            local saved=save_config()
+            last_save=os.time()
+            if not saved then
+                local status='Could not save settings. Check for updates again to retry.'
+                if update then Updates.cancel_install(status) end
+                msg(update and status or 'Could not save settings. Reload canceled.')
+            else
+                local menu=require('src.ui.MainWindow')
+                local was_open=menu:is_open()
+                menu:hide(false)
+                wait(0) -- Settings are saved before the renderer or active Lua file is touched.
+                if not can_reload(reload) or menu:is_open() then
+                    Home.reload_requested=reload
+                elseif update and not Updates.install_staged() then
+                    if was_open then menu:show() end
+                    msg(Updates.status)
+                else
+                    saved_for_reload=true
+                    local ok,result=pcall(function()
+                        Extras:stop_startup_audio()
+                        imgui.ShutdownRenderer()
+                        if update then msg(Updates.status..'. Reloading...') end
+                        return thisScript():reload()
+                    end)
+                    if ok and result~=false then return end
+                    saved_for_reload=false
+                    print('[Leone Menu] Live reload did not complete: '..tostring(result))
+                    if update then Updates.status=Updates.status..'. Restart GTA to load it.' end
+                    msg(update and Updates.status or 'Could not reload Leone Menu. Restart GTA to reload it.')
+                end
             end
         elseif Home.update_check_requested and not reload then
             Home.update_check_requested=false

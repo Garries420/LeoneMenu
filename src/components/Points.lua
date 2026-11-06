@@ -355,7 +355,7 @@ function Points:get_overlay_config()
 end
 
 function Points:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Points:render_ui_settings()

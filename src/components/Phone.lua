@@ -81,7 +81,7 @@ function P:register()
     shared.event_handler:register('PLAYER_QUIT',function(id) return pending and pending.id==id end,function() pending=nil;bad_player() end)
     require('src.ui.MainWindow'):add_page('phone',{title='Phone',icon=fa('MOBILE_SCREEN_BUTTON'),order=999,render_function=function() P:render_ui_settings() end})
 end
-function P:save_config() Config.save('config/Leone Menu/phone.json',cfg) end
+function P:save_config() return Config.save('config/Leone Menu/phone.json',cfg) end
 function P:render_ui_settings()
     imgui.DrawChild('Phone',function(width)
         H.toggle('Show Player ID','sms_id',cfg.show_id,width)

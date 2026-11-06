@@ -91,7 +91,7 @@ function Backup:get_overlay_config()
 end
 
 function Backup:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Backup:render_ui_settings()

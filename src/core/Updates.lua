@@ -2,10 +2,11 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.5',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.6',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
+local staged,installed
 local initial={132,137,209,212,230,236,107,195,270,269,271,106,293,0,68,200,62,221,229,214,127,124,24,164,202,66,234,235,261,272,43,91,2,291,93,101,233,126,211}
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
@@ -35,25 +36,48 @@ function U.check_skins(manual)
         end):catch(unavailable)
     end):catch(unavailable)
 end
-local function install(manifest)
+local function download(manifest)
     U.status='Downloading version '..manifest.version
     Http:new('GET',menu_url,nil,30):then_(function(res)
         if res.status_code~=200 or #res.text<1000 or U.sha256(res.text)~=manifest.sha256:lower() then U.status='Update verification failed; current menu kept';return end
         local compiled=loadstring(res.text,'@LeoneMenu-update')
         if not compiled or not res.text:find('LEONE_MENU_BUNDLE',1,true) then U.status='Invalid update; current menu kept';return end
-        local target=thisScript().path
-        local old=Config.read(target)
-        if not old then U.status='Could not read current script';return end
-        local ok=Config.write('config/Leone Menu/LeoneMenu.previous.lua',old)
-        if not ok then U.status='Could not save rollback copy';return end
-        ok=Config.write(target,res.text)
-        if not ok then U.status='Could not replace script; current menu kept';return end
-        U.status='Installed Leone Menu '..manifest.version
+        staged={version=manifest.version,text=res.text}
+        U.status='Verified Leone Menu '..staged.version..'; waiting to reload'
         require('src.components.Home').reload_requested='update'
     end):catch(function() U.status='Update download failed; current menu kept' end):finally(function() U.busy=false end)
 end
+
+function U.cancel_install(status)
+    staged=nil
+    U.status=status
+end
+
+local function replace_script(text)
+    local target=thisScript().path
+    local old=Config.read(target)
+    if not old then return false,'Could not read current script' end
+    if not Config.write('config/Leone Menu/LeoneMenu.previous.lua',old) then return false,'Could not save rollback copy' end
+    if not Config.write(target,text) then return false,'Could not replace script; current menu kept' end
+    return true
+end
+
+function U.install_staged()
+    local update=staged
+    if not update then return false end
+    local ok,replaced,why=pcall(replace_script,update.text)
+    if not ok then print('[Leone Menu] Update file replacement failed: '..tostring(replaced)) end
+    if not ok or not replaced then
+        U.cancel_install(why or 'Could not install the update; current menu kept')
+        return false
+    end
+    U.cancel_install('Installed Leone Menu '..update.version)
+    installed=true
+    return true
+end
+
 function U.check_menu(manual)
-    if U.busy then return end
+    if U.busy or staged or installed then return end
     U.busy=true;U.status='Checking for updates...'
     Http:new('GET',base..'leone-update.json',nil,20):then_(function(res)
         local m=res.status_code==200 and json.decode(res.text)
@@ -63,7 +87,7 @@ function U.check_menu(manual)
             or not m.sha256:match('^%x+$') or #m.sha256~=64 or m.url~=menu_url then
             U.status='Could not verify the update feed; keeping '..U.version;U.busy=false
         elseif not R.newer(m.version,U.version) then U.status='Leone Menu is up to date ('..U.version..')';U.busy=false
-        else install(m) end
+        else download(m) end
         if manual then msg(U.status) end
     end):catch(function() U.status='Could not check updates; menu works offline';U.busy=false end)
 end

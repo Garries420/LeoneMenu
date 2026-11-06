@@ -263,7 +263,7 @@ function AcceptVest:get_overlay_config()
 end
 
 function AcceptVest:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function AcceptVest:render_ui_settings()

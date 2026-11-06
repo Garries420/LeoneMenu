@@ -54,7 +54,7 @@ function PedCounter:get_overlay_config()
 end
 
 function PedCounter:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function PedCounter:render_ui_settings()

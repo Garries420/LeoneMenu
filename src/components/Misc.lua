@@ -446,7 +446,7 @@ function Misc:get_config()
 end
 
 function Misc:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function Misc:render_portable_radio()

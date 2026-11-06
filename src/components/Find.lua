@@ -102,7 +102,7 @@ function F:register()
     end,function() return false end)
     MainWindow:add_page('find',{title='Autofind',icon=fa('LOCATION_DOT'),render_function=function() F:render_ui_settings() end})
 end
-function F:save_config() Config.save('config/Leone Menu/autofind.json',cfg) end
+function F:save_config() return Config.save('config/Leone Menu/autofind.json',cfg) end
 function F:render_ui_settings()
     imgui.DrawChild('Autofind',function(width)
         imgui.Text('Find Player:');imgui.Text('CMD: /af [Player ID / Name]');imgui.Separator()

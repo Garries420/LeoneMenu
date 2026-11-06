@@ -215,7 +215,7 @@ function Lawyer:register()
     overlay.allowed_colors={['28DC40']=true}
 end
 
-function Lawyer:save_config() Config.save(path,cfg) end
+function Lawyer:save_config() return Config.save(path,cfg) end
 
 function Lawyer:render()
     imgui.DrawChild('Lawyering',function(width)
