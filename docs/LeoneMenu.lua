@@ -1101,7 +1101,7 @@ local Parachute=require('src.components.Parachute')
 local E={}
 local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),auto_freq=imgui.new.bool(false),last_frequency=0}
 local file='config/Leone Menu/misc-extras.json'
-local state={para_until=0,last_notice=-10,loaded_until=0,initialized=false}
+local state={para_until=0,last_notice=-10,loaded_until=0}
 function E:register()
     Config.load(file,cfg)
     -- Legacy nonzero last_frequency was recorded only after a real radio reply.
@@ -1134,13 +1134,37 @@ function E:register()
         imgui.Text('Version '..require('src.core.Updates').version)
         imgui.PopFont()
     end)
+    addEventHandler('onScriptTerminate',function(scr)
+        if scr==script.this then self:stop_startup_audio() end
+    end)
+end
+local function startup_ready()
+    return doesCharExist(PLAYER_PED) and sampIsLocalPlayerSpawned() and sampGetGamestate()==3
+        and not sampIsDialogActive() and not isPauseMenuActive()
+end
+function E:can_update()
+    return state.loaded_until>0 and os.clock()>=state.loaded_until and startup_ready() and not sampIsChatInputActive()
+end
+function E:stop_startup_audio()
+    local stream=state.audio
+    state.audio=nil
+    if stream then releaseAudioStream(stream) end
 end
 function E:loaded()
     lua_thread.create(function()
-        while not doesCharExist(PLAYER_PED) or not sampIsLocalPlayerSpawned() or sampGetGamestate()~=3 or sampIsDialogActive() do wait(100) end
-        wait(1000);state.initialized=true;Frequency:loaded();state.loaded_until=os.clock()+8
+        while not startup_ready() do wait(100) end
+        wait(1000)
+        while not startup_ready() do wait(100) end
+        local ok,err=pcall(require('src.components.Fixes').preload_animations)
+        if not ok then print('[Leone Menu] Animation preload failed: '..tostring(err)) end
+        Frequency:loaded();state.loaded_until=os.clock()+8
         local ok,stream=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/modloadedin.mp3')
-        if ok and stream and stream~=0 then setAudioStreamState(stream,1);wait(15000);releaseAudioStream(stream) end
+        if ok and stream and stream~=0 then
+            state.audio=stream
+            setAudioStreamState(stream,1)
+            wait(15000)
+            self:stop_startup_audio()
+        end
     end)
 end
 function E:get_config() return cfg end
@@ -1337,7 +1361,13 @@ end
 local function _preload_animations()
     ffi.cdef [[
         typedef void (__cdecl *AddAnimBlockRef_t)(int index);
+        unsigned long __stdcall GetEnvironmentVariableA(const char*,char*,unsigned long);
+        int __stdcall SetEnvironmentVariableA(const char*,const char*);
     ]]
+    -- Model references live for the GTA process, across Lua script reloads.
+    local kernel=ffi.load('kernel32')
+    local preload_marker='LEONE_MENU_ANIMATION_REFS'
+    if kernel.GetEnvironmentVariableA(preload_marker,nil,0)>0 then return end
 
     local AddAnimBlockRef = ffi.cast("AddAnimBlockRef_t", 0x4D3FB0)
     local animBlocksIdStart = memory.read(0x48C36B + 2, 4, true)
@@ -1350,6 +1380,7 @@ local function _preload_animations()
     end
 
     loadAllModelsNow()
+    kernel.SetEnvironmentVariableA(preload_marker,'1')
 end
 
 local function _register_event_handlers()
@@ -1378,9 +1409,10 @@ function Fixes:register()
     _apply_framerate_fixes()
     _apply_general_fixes()
 
-    _preload_animations()
     _register_event_handlers()
 end
+
+Fixes.preload_animations=_preload_animations
 
 return Fixes
 
@@ -4848,7 +4880,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.1',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -4895,8 +4927,7 @@ local function install(manifest)
         ok=Config.write(target,res.text)
         if not ok then U.status='Could not replace script; current menu kept';return end
         U.status='Installed Leone Menu '..manifest.version
-        msg('Updated Leone Menu to {1E3348}'..manifest.version..'{FFFFFF}. Reloading...')
-        require('src.components.Home').reload_requested=true
+        require('src.components.Home').reload_requested='update'
     end):catch(function() U.status='Update download failed; current menu kept' end):finally(function() U.busy=false end)
 end
 function U.check_menu(manual)
@@ -4914,15 +4945,18 @@ function U.check_menu(manual)
         if manual then msg(U.status) end
     end):catch(function() U.status='Could not check updates; menu works offline';U.busy=false end)
 end
-function U.start()
+function U.start(can_update)
     local bundled=Config.read('resource/Leone Menu/alliance-skins.html')
     local fallback=bundled and R.alliance(bundled)
     if fallback and fallback.version>=U.alliance.version then U.alliance=fallback end
     local saved=Config.read(cache)
     local parsed=saved and R.alliance(saved)
     if parsed and parsed.version>=U.alliance.version then U.alliance=parsed end
-    U.check_menu(false);U.check_skins(false)
-    lua_thread.create(function() while true do wait(3600000);U.check_skins(false) end end)
+    lua_thread.create(function()
+        while not can_update() do wait(100) end
+        U.check_menu(false);U.check_skins(false)
+        while true do wait(3600000);U.check_skins(false) end
+    end)
 end
 return U
 
@@ -4934,7 +4968,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.0")
+script_version("1.0.1")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5497,20 +5531,30 @@ function main()
 
     shared.event_handler:process("onScriptInit")
 
-    require("src.core.Updates").start()
     Extras:loaded()
+    local Updates=require("src.core.Updates")
+    Updates.start(function() return Extras:can_update() end)
     msg("Leone Menu loaded. Use {1E3348}/leone{FFFFFF}.")
 
+    local function can_reload(reason)
+        return reason~='update' or (Extras:can_update() and not Updates.busy and not Updates.skins_busy)
+    end
     local last_save=os.time()
     while true do
-        if Home.reload_requested then
-            print('Leone Menu reload requested. Closing the menu.')
+        local reload=Home.reload_requested
+        if reload and can_reload(reload) then
             require('src.ui.MainWindow'):hide()
             wait(0) -- Let the render and input callbacks finish before teardown.
-            imgui.ShutdownRenderer()
-            print('Renderer closed. Reloading Leone Menu.')
-            thisScript():reload()
-            return
+            if can_reload(reload) then
+                print('Leone Menu reload requested. Releasing the menu renderer.')
+                Extras:stop_startup_audio()
+                save_config()
+                imgui.ShutdownRenderer()
+                if reload=='update' then msg(Updates.status..'. Reloading...') end
+                print('Renderer closed. Reloading Leone Menu.')
+                thisScript():reload()
+                return
+            end
         end
         if os.time()-last_save>=30 then save_config();last_save=os.time() end
         shared.hotkey_manager:update()
@@ -8775,7 +8819,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.0", "97e1f959092a258b832bc7f5825b0063c5845804f9b53d07956c096ccec79079", mismatch)
+    package_check.recover("1.0.1", "97e1f959092a258b832bc7f5825b0063c5845804f9b53d07956c096ccec79079", mismatch)
     return
 end
 return require('src.main')
