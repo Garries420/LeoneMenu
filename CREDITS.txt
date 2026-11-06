@@ -1,0 +1,22 @@
+LEONE MENU - CREDITS
+Original Sputnik creators: Kev and Futurestunt.
+Kev: https://forums.hzgaming.net/member.php/49614-Kev
+Sputnik: https://forums.hzgaming.net/showthread.php/639069-sputnik-the-non-shady-alternative-to-PEMENU
+Futurestunt: credited by name; no contact link was supplied.
+
+Leone Menu adaptation and requirements: Garry.
+Forum: https://forums.hzgaming.net/member.php/25596-Garry
+Discord username: garries
+
+The original supplied sputnik.lua and lib.7z are preserved in the development
+workspace. Their retained code and dependencies keep their original attribution.
+Bundled libraries include upmimgui, SAMP.Lua, fAwesome7, effil, dkjson and the
+required MoonLoader helper files. Original notices remain in those files.
+Skin previews use the PNGs from:
+https://open.mp/docs/scripting/resources/skins
+https://assets.open.mp/assets/images/skins/
+GTA character artwork belongs to its respective owners.
+The supplied Leone icon was recolored using the built-in image editing tool.
+
+Skin images 1 and 2 use background-extraction edits made with the built-in image
+editing tool. The original input PNGs remain in the development workspace.
