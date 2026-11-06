@@ -1,6 +1,7 @@
 -- Module: F:\2025\EDrive\dev\luapack\src\utils\Player.lua
 
 local Player = {}
+Player.VEST_RANGE = 6
 
 function Player:resolve_player_id(args,quiet)
     local players={}
@@ -42,7 +43,7 @@ function Player:get_closest_player_id(max_distance, filters)
                     local dz = pz - l_pz
                     local dist = math.sqrt(dx * dx + dy * dy + dz * dz)
 
-                    if dist < closest_distance then
+                    if closest_id == nil or dist < closest_distance then
                         closest_id = i
                         closest_distance = dist
                     end
@@ -54,9 +55,9 @@ function Player:get_closest_player_id(max_distance, filters)
 end
 
 function Player:get_player_id_by_name(player_name)
-    local my_id = select(2, sampGetPlayerIdByCharHandle(PLAYER_PED))
+    local local_player, my_id = sampGetPlayerIdByCharHandle(PLAYER_PED)
 
-    if player_name == sampGetPlayerNickname(my_id) then
+    if local_player and player_name == sampGetPlayerNickname(my_id) then
         return my_id
     end
 

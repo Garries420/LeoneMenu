@@ -103,7 +103,7 @@ local function _process_aim_request()
     local x,y,z=getCharCoordinates(PLAYER_PED)
     local tx,ty,tz=getCharCoordinates(ped)
     cancel()
-    if not is_within_distance_3d(x,y,z,tx,ty,tz,6)then return end
+    if not is_within_distance_3d(x,y,z,tx,ty,tz,Player.VEST_RANGE)then return end
     _get_active_timer():set_temp_interval(3)
     sampSendChat(string.format('/guard %d 200',request.id))
 end
@@ -115,7 +115,7 @@ local function _find_closest_valid_player(attempt)
     end
 
     local local_pos_x, local_pos_y, local_pos_z = getCharCoordinates(PLAYER_PED)
-    local max_dist = 6
+    local max_dist = Player.VEST_RANGE
     local closest, retry = nil, nil
     local connected,local_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
 
@@ -397,7 +397,7 @@ function AutoVest:get_overlay_config()
 end
 
 function AutoVest:save_config()
-    carboneum.save(CONFIG_PATH, _config)
+    return carboneum.save(CONFIG_PATH, _config)
 end
 
 function AutoVest:render_ui_settings()
@@ -409,7 +409,15 @@ function AutoVest:render_ui_settings()
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
         imgui.Text('Alliance skins to be vested');imgui.SameLine(width-290)
-        if imgui.AnimButton(fa('GEAR')) then Editor:show(_config.groups,function()self:save_config()end) end
+        if imgui.AnimButton(fa('GEAR')) then
+            Editor:show(_config.groups,function(groups)
+                local previous=_config.groups
+                _config.groups=groups
+                if self:save_config() then return true end
+                _config.groups=previous
+                return false
+            end)
+        end
         imgui.SameLine(width-250)
         imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
         if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end

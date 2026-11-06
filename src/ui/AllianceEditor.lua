@@ -4,10 +4,15 @@ local H=require('src.ui.Helpers')
 local R=require('src.core.Rules')
 local Import=require('src.core.GangImport')
 local Picker=require('src.ui.SkinPicker')
-local E={name='',hex='1E3348',skins=''}
+local E={}
+local function clear_fields(editor)
+    editor.name='';editor.hex='';editor.skins='';editor.index=nil;editor.error=nil
+end
 function E:show(groups,on_save)
-    self.groups=groups;self.on_save=on_save;self.open=true
-    self.name='';self.hex='1E3348';self.skins='';self.index=nil;self.error=nil
+    self.groups={}
+    for i,g in ipairs(groups)do self.groups[i]=g end
+    self.on_save=on_save;self.open=true
+    clear_fields(self)
 end
 local function color(hex)
     local n=tonumber(hex,16) or 0
@@ -47,13 +52,24 @@ function E:render()
     imgui.SameLine();imgui.ColorButton('##color_preview',color(self.hex))
     imgui.Text('Skins (ID)');self.skins=H.input('##gang_skins',self.skins,'1, 2, 3, 10, 11, 22, 35',field_width,2048)
     if imgui.IsItemHovered()then imgui.SetTooltip('Format: 1, 2, 3, 10, 11, 22, 35')end
+    if imgui.AnimButton('Add')then
+        local name=R.trim(self.name)
+        local ids=R.skins(self.skins)
+        if name=='' or not self.hex:match('^%x%x%x%x%x%x$') or not ids then
+            self.error='Enter a name, six HEX digits and valid skin IDs.'
+        else
+            self.groups[self.index or (#self.groups+1)]={name=name,hex=self.hex:upper(),skins=ids}
+            clear_fields(self)
+        end
+    end
     if self.error then imgui.TextWrapped(self.error)end
     if #self.groups>0 then
-        imgui.Separator();imgui.Text('Saved groups')
+        imgui.Separator();imgui.Text('Groups')
         for i,g in ipairs(self.groups)do
             imgui.PushID(i)
             if imgui.AnimButton(fa('TRASH')..'##remove')then
-                table.remove(self.groups,i);self.index=nil;self.on_save()
+                table.remove(self.groups,i)
+                clear_fields(self)
             else
                 imgui.SameLine()
                 if imgui.Selectable(g.name,false,imgui.SelectableFlags.NoAutoClosePopups)then
@@ -67,13 +83,8 @@ function E:render()
     imgui.Separator()
     local button_width=math.min(150,(imgui.GetContentRegionAvail().x-12)/2)
     if imgui.AnimButton('Save',imgui.ImVec2(button_width,38))then
-        local ids=R.skins(self.skins)
-        if R.trim(self.name)=='' or not self.hex:match('^%x%x%x%x%x%x$') or not ids then
-            self.error='Enter a name, six HEX digits and valid skin IDs.'
-        else
-            local g={name=R.trim(self.name),hex=self.hex:upper(),skins=ids}
-            self.groups[self.index or (#self.groups+1)]=g;self.on_save();imgui.CloseCurrentPopup()
-        end
+        if self.on_save(self.groups) then imgui.CloseCurrentPopup()
+        else self.error='Could not save groups. Please try again.' end
     end
     imgui.SameLine();if imgui.AnimButton('Cancel',imgui.ImVec2(button_width,38))then imgui.CloseCurrentPopup()end
     Picker:render()

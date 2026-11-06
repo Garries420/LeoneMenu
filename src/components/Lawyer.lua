@@ -1,6 +1,7 @@
 local bit=require('bit')
 local fa=require('fAwesome7')
 local imgui=require('upmimgui')
+local Colors=require('src.core.Colors')
 local Config=require('src.core.Config')
 local H=require('src.ui.Helpers')
 local MainWindow=require('src.ui.MainWindow')
@@ -18,6 +19,8 @@ local labels={defend='Auto Lawyer',free='Auto Free'}
 local commands={defend='al',free='afree'}
 local last_targets,active={},{}
 local pending,wanted,last_mode
+local wanted_cache,next_wanted_at,manual_wanted_until=nil,0,0
+local WANTED_REPLY_SECONDS=4
 local cooldown_until=0
 local attempted_until=0
 
@@ -68,8 +71,8 @@ local function send(mode,target,hotkey)
     sampSendChat(('/%s %d%s'):format(mode,target.id,mode=='defend' and ' 200' or ''))
 end
 
-local function nearby(filter)
-    return Player:get_closest_player_id(7,{function(id,ped)
+local function nearby(filter,range)
+    return Player:get_closest_player_id(range or 7,{function(id,ped)
         return ped~=PLAYER_PED and doesCharExist(ped) and sampIsPlayerConnected(id) and filter(id,ped)
     end})
 end
@@ -89,41 +92,63 @@ local function choose_nearby(mode,suspects)
     local found,id=nearby(function(id,ped)
         if mode=='free' then return getCharModel(ped)==50 end
         return suspects[id]==plain_name(sampGetPlayerNickname(id)):lower()
-    end)
+    end,mode=='free' and Player.VEST_RANGE or nil)
     if found then send(mode,snapshot(id),true)
     else notify(mode=='free' and 'No nearby prisoner found.' or 'No nearby wanted player found.') end
 end
 
 local function nearest(mode)
     if remaining()>0 then notify('Lawyer CD: '..seconds_text(remaining()));return end
-    if wanted and os.clock()<wanted.expires then return end
+    local now=os.clock()
+    if wanted and now<=wanted.expires then return end
     if mode=='free' then choose_nearby(mode);return end
-    wanted={expires=os.clock()+4}
-    sampSendChat('/wanted')
+    if now<manual_wanted_until then return end
+    if now<next_wanted_at then
+        if wanted_cache then choose_nearby(mode,wanted_cache) end
+        return
+    end
+    wanted_cache=nil
+    next_wanted_at=now+cooldown()
+    wanted={expires=now+WANTED_REPLY_SECONDS}
+    samp_send_hidden_command('wanted')
 end
 
-local function handle_chat(text)
+local function handle_wanted_reply(color,text)
+    if not wanted or os.clock()>wanted.expires then return end
+    if color==Colors.ORANGE and text=='__________WANTED LIST__________' then
+        wanted.suspects={}
+        return false
+    end
+    if color==Colors.WHITE then
+        local name,id=text:match('^(.-) %((%d+)%)%:%s*%d+ outstanding charges?%.$')
+        if id and wanted.suspects then
+            wanted.suspects[tonumber(id)]=plain_name(name):lower()
+            return false
+        end
+    end
+    if color==Colors.WHITE and text=='No current wanted suspects.' then
+        wanted_cache={}
+    elseif color==Colors.ORANGE and text=='________________________________' and wanted.suspects then
+        wanted_cache=wanted.suspects
+    else
+        return
+    end
+    wanted=nil
+    if remaining()==0 and playable() then choose_nearby('defend',wanted_cache) end
+    return false
+end
+
+local function handle_chat(color,text)
     if (text=='You are not a Lawyer!' and (next(active) or wanted or os.clock()<attempted_until))
         or (wanted and os.clock()<=wanted.expires and text=="You're not a Lawyer / Cop / FBI!") then
         active={}
         pending,wanted=nil,nil
+        wanted_cache=nil
         attempted_until,cooldown_until=0,0
         msg("You're not a {00FF00}lawyer{FFFFFF}, go get the job at {00FF00}Downtown Los Santos")
         return false
     end
-    if wanted and os.clock()<=wanted.expires then
-        if text=='__________WANTED LIST__________' then
-            wanted.suspects={}
-        elseif wanted.suspects then
-            local name,id=text:match('^(.-) %((%d+)%)%:%s*%d+ outstanding charges?%.$')
-            if id then wanted.suspects[tonumber(id)]=plain_name(name):lower() end
-            if text=='________________________________' or text=='No current wanted suspects.' then
-                local suspects=wanted.suspects
-                wanted=nil
-                if remaining()==0 and playable() then choose_nearby('defend',suspects) end
-            end
-        end
-    end
+    if handle_wanted_reply(color,text)==false then return false end
     if not pending or os.clock()>pending.expires then return end
     local name
     if pending.mode=='defend' then
@@ -154,13 +179,20 @@ function Lawyer:register()
         sampRegisterChatCommand(command,function(args) toggle(bound,args) end)
         shared.hotkey_manager:register('lawyer_'..bound,cfg[bound].keys,function() nearest(bound) end)
     end
-    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
-        return (wanted or pending or next(active) or os.clock()<attempted_until) and {Rules.trim(Rules.strip(text))}
+    shared.event_handler:register('SERVER_MESSAGE',function(color,text)
+        return (wanted or pending or next(active) or os.clock()<attempted_until) and {color,Rules.trim(Rules.strip(text))}
     end,handle_chat)
     shared.event_handler:register('SEND_COMMAND',function(command)
         local name=command:match('^/(%S+)')
         return name and (name:lower()=='defend' or name:lower()=='free')
     end,function() attempted_until=os.clock()+10 end)
+    shared.event_handler:register('SEND_COMMAND',function(command)
+        return Rules.trim(command):lower()=='/wanted' and is_command_self_sent('wanted')
+    end,function()
+        -- The server provides no request ID. Give manual output priority when requests overlap.
+        wanted=nil
+        manual_wanted_until=os.clock()+WANTED_REPLY_SECONDS
+    end)
     shared.event_handler:register('PED_TICK',function() return next(active)~=nil or wanted~=nil or pending~=nil end,function()
         local now=os.clock()
         if wanted and now>wanted.expires then wanted=nil;notify('Could not read the HZG wanted list.') end

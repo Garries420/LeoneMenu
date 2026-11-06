@@ -166,6 +166,23 @@ local function resolve_beacons_in_text(text, color)
     return text
 end
 
+local function add_chat_player_id(text)
+    local position,name=text:match('^%*%* %(%d+%) [^:]- %b() ()([^:]+): .* %*%*%s*$')
+    local advertisement=not name and text:sub(1,14)=='Advertisement:'
+    if advertisement then
+        name,position=text:match('^Advertisement:.*%- contact%s+([^(]-)()%s*%(')
+        if not name then name,position=text:match('^Advertisement:.*%- contact%s+(.-)()%s*$') end
+    end
+    if not name then return text end
+
+    local id=Player:get_player_id_by_name(Rules.trim(Rules.strip(name)):gsub('%s+','_'))
+    if not id or id<0 then return text end
+
+    local label=advertisement and (' [%d]'):format(id) or ('[%d] '):format(id)
+    if #text+#label>144 then return text end
+    return text:sub(1,position-1)..label..text:sub(position)
+end
+
 local function _register_event_handlers()
 
     shared.event_handler:register(
@@ -257,24 +274,18 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
+        function() return true end,
         function(color, text)
+            local updated=add_chat_player_id(text)
             if _config.beacon_resolver.enabled[0] then
-                return { color, text }
+                local last_hex_color
+                for hex_color in text:gmatch("{%x%x%x%x%x%x}") do
+                    last_hex_color = hex_color
+                end
+                local normal_color = last_hex_color or string.format("{%06X}", bit.rshift(color, 8))
+                updated = resolve_beacons_in_text(updated, normal_color)
             end
-
-            return false
-        end,
-        function(color, text)
-
-            local last_hex_color
-            for hex_color in text:gmatch("{%x%x%x%x%x%x}") do
-                last_hex_color = hex_color
-            end
-            local normal_color = last_hex_color or string.format("{%06X}", bit.rshift(color, 8))
-
-            text = resolve_beacons_in_text(text, normal_color)
-
-            return { color, text }
+            if updated~=text then return { color, updated } end
         end
     )
 
