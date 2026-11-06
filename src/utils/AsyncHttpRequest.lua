@@ -1,9 +1,10 @@
 -- Sputnik asynchronous request API, using Windows' certificate-validated HTTPS.
 local effil=require('effil')
 local A={};A.__index=A
-function A:new(method,url,args,timeout)
-    local self=setmetatable({resolve=function() end,reject=function() end,finish=function() end},A)
-    local task=effil.thread(function(url)
+function A:new(method,url,args,timeout,poll_externally)
+    local self=setmetatable({resolve=function() end,reject=function() end,finish=function() end,
+        started=os.time(),timeout=timeout or 20},A)
+    self.task=effil.thread(function(url)
         local ffi=require('ffi')
         ffi.cdef[[
         int __stdcall MultiByteToWideChar(unsigned int,unsigned long,const char*,int,unsigned short*,int);
@@ -42,21 +43,30 @@ function A:new(method,url,args,timeout)
         end)
         close();return ok,result
     end)(url)
-    lua_thread.create(function()
-        local started=os.time()
-        while true do
-            local status=task:status()
-            if status=='completed' then
-                local ok,success,response=pcall(task.get,task)
-                if ok and success then self.resolve(response) else self.reject(tostring(response or success)) end
-                self.finish();break
-            elseif status=='failed' or status=='canceled' or os.time()-started>(timeout or 20) then
-                task:cancel();self.reject('HTTPS request failed or timed out');self.finish();break
-            end
-            wait(20)
-        end
-    end)
+    if not poll_externally then
+        lua_thread.create(function()
+            while not self:poll() do wait(20) end
+        end)
+    end
     return self
+end
+function A:poll()
+    local task=self.task
+    if not task then return true end
+    local ok,status=pcall(task.status,task)
+    if ok and status=='completed' then
+        self.task=nil
+        local read,success,response=pcall(task.get,task)
+        if read and success then self.resolve(response) else self.reject(tostring(response or success)) end
+    elseif not ok or status=='failed' or status=='canceled' or os.time()-self.started>self.timeout then
+        self.task=nil
+        pcall(task.cancel,task)
+        self.reject('HTTPS request failed or timed out')
+    else
+        return false
+    end
+    self.finish()
+    return true
 end
 function A:then_(f) self.resolve=f;return self end
 function A:catch(f) self.reject=f;return self end

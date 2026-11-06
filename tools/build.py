@@ -58,7 +58,7 @@ text+="return require('src.main')\n"
 gh=root/'github-ready';shutil.copy2(moon/'LeoneMenu.lua',gh/'LeoneMenu.lua')
 manifest={'version':version,'runtime':release['runtime'],'package':fingerprint,
           'url':'https://garries420.github.io/LeoneMenu/LeoneMenu.lua','sha256':hashlib.sha256((moon/'LeoneMenu.lua').read_bytes()).hexdigest()}
-(gh/'leone-update.json').write_text(json.dumps(manifest,indent=2)+'\n')
+(gh/'leone-update-v2.json').write_text(json.dumps(manifest,indent=2)+'\n')
 (root/'dist').mkdir(exist_ok=True)
 archive=root/'dist'/('LeoneMenu-'+version+'.zip')
 with zipfile.ZipFile(archive,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:

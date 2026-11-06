@@ -17,10 +17,10 @@ function Home:register()
             if imgui.AnimButton('Garry - forum profile') then H.open('https://forums.hzgaming.net/member.php/25596-Garry') end
             if imgui.AnimButton('Discord: garries - click to copy') then setClipboardText('garries');msg('Discord username copied: {1E3348}garries{FFFFFF}.') end
         end)
-        if imgui.AnimButton(fa('ROTATE')..' Reload Leone Menu') then
-            Home.reload_requested=true
+        if not U.restart_required then
+            if imgui.AnimButton(fa('ROTATE')..' Reload Leone Menu') then Home.reload_requested=true end
+            imgui.SameLine()
         end
-        imgui.SameLine()
         if imgui.AnimButton('Check for updates') then Home.update_check_requested=true end
         imgui.TextWrapped(U.status)
         imgui.TextWrapped(U.skins_status)

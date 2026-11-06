@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.6")
+script_version("1.0.7")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -573,53 +573,44 @@ function main()
 
     Extras:loaded()
     local Updates=require("src.core.Updates")
-    Updates.start(function() return Extras:can_update() end)
+    Updates.start()
     msg("Leone Menu loaded. Use {1E3348}/leone{FFFFFF}.")
 
-    local function can_reload(reason)
-        return reason~='update' or (Extras:can_update() and not Updates.busy and not Updates.skins_busy)
-    end
     local last_save=os.time()
     while true do
-        local reload=Home.reload_requested
-        if reload and can_reload(reload) then
+        local ready=Extras:can_update()
+        if Home.update_check_requested then
+            Home.update_check_requested=false
+            Updates.request_check()
+        end
+        Updates.tick(ready)
+        if Home.reload_requested and ready and not Updates.busy and not Updates.skins_busy then
             Home.reload_requested=false
-            local update=reload=='update'
-            local saved=save_config()
-            last_save=os.time()
-            if not saved then
-                local status='Could not save settings. Check for updates again to retry.'
-                if update then Updates.cancel_install(status) end
-                msg(update and status or 'Could not save settings. Reload canceled.')
+            if Updates.restart_required then
+                msg(Updates.status)
+            elseif not save_config() then
+                last_save=os.time()
+                msg('Could not save settings. Reload canceled.')
             else
+                last_save=os.time()
                 local menu=require('src.ui.MainWindow')
-                local was_open=menu:is_open()
                 menu:hide(false)
-                wait(0) -- Settings are saved before the renderer or active Lua file is touched.
-                if not can_reload(reload) or menu:is_open() then
-                    Home.reload_requested=reload
-                elseif update and not Updates.install_staged() then
-                    if was_open then menu:show() end
-                    msg(Updates.status)
+                wait(0)
+                if not Extras:can_update() or menu:is_open() then
+                    Home.reload_requested=true
                 else
                     saved_for_reload=true
                     local ok,result=pcall(function()
                         Extras:stop_startup_audio()
                         imgui.ShutdownRenderer()
-                        if update then msg(Updates.status..'. Reloading...') end
                         return thisScript():reload()
                     end)
                     if ok and result~=false then return end
                     saved_for_reload=false
                     print('[Leone Menu] Live reload did not complete: '..tostring(result))
-                    if update then Updates.status=Updates.status..'. Restart GTA to load it.' end
-                    msg(update and Updates.status or 'Could not reload Leone Menu. Restart GTA to reload it.')
+                    msg('Could not reload Leone Menu. Restart GTA to reload it.')
                 end
             end
-        elseif Home.update_check_requested and not reload then
-            Home.update_check_requested=false
-            Updates.check_menu(true)
-            Updates.check_skins(true)
         end
         if os.time()-last_save>=30 then save_config();last_save=os.time() end
         shared.hotkey_manager:update()
