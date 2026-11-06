@@ -404,14 +404,11 @@ local function _find_closest_valid_player()
 
     local local_pos_x, local_pos_y, local_pos_z = getCharCoordinates(PLAYER_PED)
     local max_dist = 6
-    local closest = nil
+    local closest, retry = nil, nil
+    local connected,local_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
 
     local function is_valid_player(player, id)
-        local name = sampGetPlayerNickname(id)
-
-        if not name:find("_") then
-            return false
-        end
+        if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player) then return false end
 
         local skin=getCharModel(player)
         local match=_config.vester_mode[0]==VESTER_MODE.AUTOMATIC and Updates.is_alliance(skin)
@@ -422,9 +419,8 @@ local function _find_closest_valid_player()
         end
         if not match then return false end
 
-        if sampIsPlayerPaused(id) or isCharPlayingAnim(player, "KILL_Knife_Ped_Die") then
-            return false
-        end
+        local health=sampGetPlayerHealth(id)
+        if health<=0 then return false end
 
         local armor = sampGetPlayerArmor(id)
         if armor > _config.offer_if_armor_below[0] then
@@ -440,7 +436,7 @@ local function _find_closest_valid_player()
             player_id = id,
             distance = math.sqrt((x - local_pos_x) ^ 2 + (y - local_pos_y) ^ 2 + (z - local_pos_z) ^ 2),
             armor = armor,
-            health = sampGetPlayerHealth(id),
+            health = health,
             ped = player
         }
     end
@@ -453,7 +449,10 @@ local function _find_closest_valid_player()
                 local player_data = is_valid_player(ped, id)
 
                 if player_data then
-                    if not closest then
+                    local attempt=_auto_vest_state.unconfirmed
+                    if attempt and id==attempt.id and os.clock()<attempt.until_time then
+                        retry=player_data
+                    elseif not closest then
                         closest = player_data
                     else
                         local cmd_mode = _config.command_mode.current[0]
@@ -483,7 +482,7 @@ local function _find_closest_valid_player()
         end
     end
 
-    return closest
+    return closest or retry
 end
 
 local function _handle_ped_tick()
@@ -497,6 +496,9 @@ local function _handle_ped_tick()
     local cmd_mode = _config.command_mode.current[0]
     local command = cmd_mode == COMMAND_MODE.NORMAL and "guard" or "guardnear"
 
+    -- If the server does not confirm an offer, give another eligible player
+    -- the next attempt instead of repeatedly selecting the same one.
+    _auto_vest_state.unconfirmed={id=target.player_id,until_time=os.clock()+6}
     sampSendChat(string.format("/%s %d 200", command, target.player_id))
 end
 
@@ -514,11 +516,17 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color, text)
-            return color == Colors.GREY and text == "You are not a bodyguard."
+        function(_, text)
+            return Rules.trim(Rules.strip(text)) == "You are not a bodyguard."
         end,
         function()
             _auto_vest_state.timers[COMMAND_MODE.NORMAL]:pause()
+            local now=os.clock()
+            if not _auto_vest_state.last_job_warning or now-_auto_vest_state.last_job_warning>=5 then
+                _auto_vest_state.last_job_warning=now
+                -- Group the final highlights to keep the entire message within SA-MP's 144-byte limit.
+                sampAddChatMessage('[Leone Menu] {FFFFFF}You dont have {33CCFF}bodyguard job{FFFFFF}, switch to {33CCFF}DD mode in /leone or get to Ganton Gym and change job',0xFF1E3348)
+            end
         end
     )
 
@@ -534,6 +542,7 @@ local function _register_event_handlers()
             return false
         end,
         function(player_name)
+            _auto_vest_state.unconfirmed=nil
             _auto_vest_state.last_vest_recipient_name = player_name
             _auto_vest_state.pending={name=player_name,id=Player:get_player_id_by_name(player_name:gsub(" ","_")),price=200}
             local timer=_get_active_timer()
@@ -1171,11 +1180,11 @@ function E:get_config() return cfg end
 function E:save_config() Config.save(file,cfg) end
 function E:render_frisk(width) H.bind('Aim and frisk a player','aim_frisk',cfg.frisk,width) end
 function E:render_repair(width) H.bind('Offer $1 repair to nearest driver or passenger','repair_nearest',cfg.repair,width) end
-function E:render_radio(width) H.toggle('Checks /fmotd for alliance frequency and changes freq','auto_freq',cfg.auto_freq,width,'Reads /stats only on the first manual enable. Remembers the confirmed frequency; listens to startup/manual MOTDs and checks /fmotd every 5 minutes.') end
+function E:render_radio(width) H.toggle('Checks /fmotd for alliance frequency and changes freq','auto_freq',cfg.auto_freq,width,'Listens for /fmotd in chat to read the freq and auto swaps to the newest one, it does an automatic silent check every 5 minutes also') end
 function E:render_random()
     imgui.DrawChild('Random',function(width)
         imgui.Text('Parachute')
-        H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,'Skips the parachute in the direction of your mouse wheel, Q or E, using your existing weapons. Shows parachute availability for 3 seconds with a 10 second cooldown. Selects and keeps the parachute while skydiving.')
+        H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,"Skips over the parachute to the next available weapon or fist, displays a small overlay to notify you that you got a parachute. the parachute appears again when you're falling")
         imgui.Text('Shortcuts');imgui.Text('/signcheck -> /si')
     end)
 end
@@ -1530,6 +1539,65 @@ return F
 
 end
 
+package.preload['src.components.FriskWarning'] = function()
+local Player=require('src.utils.Player')
+local Rules=require('src.core.Rules')
+local events=require('src.shared').event_handler
+local Frisk={}
+local request,stream,playing
+
+local function normalized(name) return Rules.trim(name):gsub('_',' '):lower() end
+
+local function release()
+    if stream then releaseAudioStream(stream);stream=nil end
+    playing=false
+end
+
+function Frisk.play()
+    if playing then return end
+    playing=true
+    lua_thread.create(function()
+        local ok,handle=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/Sniperwarning.mp3')
+        if ok and handle and handle~=0 then
+            stream=handle
+            setAudioStreamState(stream,1)
+            wait(4000)
+        end
+        release()
+    end)
+end
+
+function Frisk.register(enabled)
+    events:register('SEND_COMMAND',function(command)
+        local target=command:match('^/frisk%s+(.+)$')
+        return target and {target}
+    end,function(target)
+        local id=Player:resolve_player_id(target,true)
+        request=id and {name=normalized(sampGetPlayerNickname(id)),expires=os.clock()+8}
+    end)
+    events:register('SERVER_MESSAGE',function(_,text)
+        return enabled[0] and request and os.clock()<=request.expires and {Rules.trim(Rules.strip(text))}
+    end,function(text)
+        local header=text:match('^%*%*%*%s+(.-)\'s? weapons%.%.%.%s+%*%*%*$')
+        if header then request.weapons=normalized(header)==request.name;return end
+        if request.weapons and text=='Weapon: Sniper Rifle.' then request.sniper=true;return end
+        local officer,target=text:match('^%* (.-) has frisked (.-)%.$')
+        if not officer or normalized(target)~=request.name then return end
+        local connected,my_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
+        if not connected or normalized(sampGetPlayerNickname(my_id))~=normalized(officer) then return end
+        local sniper=request.sniper
+        request=nil
+        if sniper then Frisk.play() end
+    end)
+    addEventHandler('onScriptTerminate',function(scr)
+        if scr==script.this then release() end
+    end)
+end
+
+return Frisk
+
+end
+
 package.preload['src.components.Home'] = function()
 local imgui=require('upmimgui')
 local fa=require('fAwesome7')
@@ -1627,6 +1695,203 @@ return K
 
 end
 
+package.preload['src.components.Lawyer'] = function()
+local bit=require('bit')
+local fa=require('fAwesome7')
+local imgui=require('upmimgui')
+local Config=require('src.core.Config')
+local H=require('src.ui.Helpers')
+local MainWindow=require('src.ui.MainWindow')
+local Overlay=require('src.ui.Overlay')
+local Player=require('src.utils.Player')
+local Realign=require('src.utils.ElementRealigner')
+local Rules=require('src.core.Rules')
+local shared=require('src.shared')
+
+local Lawyer={}
+local path='config/Leone Menu/lawyer.json'
+local cfg={cooldown=imgui.new.int(66),defend={keys={}},free={keys={}},overlay=Overlay.setup_overlay_defaults(
+    true,0.015,0.64,14,6,1,2,true,{0,0,0,0.588},true,{0,0,0,0.588})}
+local labels={defend='Auto Lawyer',free='Auto Free'}
+local commands={defend='al',free='afree'}
+local last_targets,active={},{}
+local pending,wanted,last_mode
+local cooldown_until=0
+
+local function plain_name(name) return Rules.trim(name):gsub('_',' ') end
+local function notify(text) sampAddChatMessage('[Leone Mods] {FFFFFF}'..text,0xFF1E3348) end
+local function seconds_text(seconds) return ('{00FF00}%ds{FFFFFF}'):format(seconds) end
+local function target_text(target)
+    return ('{%06X}%s{FFFFFF} (%d)'):format(target.color,plain_name(target.name),target.id)
+end
+local function snapshot(id)
+    return {id=id,name=sampGetPlayerNickname(id),color=bit.band(sampGetPlayerColor(id) or -1,0xFFFFFF)}
+end
+local function cooldown() return math.max(60,cfg.cooldown[0]) end
+local function remaining() return math.max(0,math.ceil(cooldown_until-os.clock())) end
+local function playable()
+    return sampGetGamestate()==3 and sampIsLocalPlayerSpawned() and not sampIsChatInputActive()
+        and not sampIsDialogActive() and not isPauseMenuActive() and not MainWindow:is_open()
+end
+
+local function disable(mode)
+    active[mode]=nil
+    notify(labels[mode]..' has been {FF0000}disabled{FFFFFF}')
+end
+
+local function toggle(mode,args)
+    args=Rules.trim(args or '')
+    local id=tonumber(args)
+    local current=active[mode]
+    if current and (args=='' or current.id==id) then return disable(mode) end
+    local previous=last_targets[mode]
+    if args=='' and previous and sampIsPlayerConnected(previous.id) and sampGetPlayerNickname(previous.id)==previous.name then id=previous.id end
+    if not id or id%1~=0 or id<0 or id>sampGetMaxPlayerId(false) or not sampIsPlayerConnected(id) then
+        notify('Usage /'..commands[mode]..' [connected player ID]');return
+    end
+    local ok,my_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
+    if ok and id==my_id then return end
+    local target=snapshot(id)
+    active[mode]=target;last_targets[mode]=target
+    notify(labels[mode]..' has been {00FF00}enabled{FFFFFF} on '..target_text(target)..' with '..seconds_text(cooldown())..' cooldown')
+end
+
+local function send(mode,target,hotkey)
+    local seconds=cooldown()
+    cooldown_until=os.clock()+seconds
+    last_mode=mode
+    pending=hotkey and {mode=mode,target=target,seconds=seconds,expires=os.clock()+10} or nil
+    sampSendChat(('/%s %d%s'):format(mode,target.id,mode=='defend' and ' 200' or ''))
+end
+
+local function nearby(filter)
+    return Player:get_closest_player_id(7,{function(id,ped)
+        return ped~=PLAYER_PED and doesCharExist(ped) and sampIsPlayerConnected(id) and filter(id,ped)
+    end})
+end
+
+local function try_target(mode)
+    local target=active[mode]
+    if not target then return false end
+    if not sampIsPlayerConnected(target.id) or sampGetPlayerNickname(target.id)~=target.name then
+        disable(mode);return false
+    end
+    if not nearby(function(id) return id==target.id end) then return false end
+    send(mode,target,false)
+    return true
+end
+
+local function choose_nearby(mode,suspects)
+    local found,id=nearby(function(id,ped)
+        if mode=='free' then return getCharModel(ped)==50 end
+        return suspects[id]==plain_name(sampGetPlayerNickname(id)):lower()
+    end)
+    if found then send(mode,snapshot(id),true)
+    else notify(mode=='free' and 'No nearby prisoner found.' or 'No nearby wanted player found.') end
+end
+
+local function nearest(mode)
+    if remaining()>0 then notify('Lawyer CD: '..seconds_text(remaining()));return end
+    if wanted and os.clock()<wanted.expires then return end
+    if mode=='free' then choose_nearby(mode);return end
+    wanted={expires=os.clock()+4}
+    sampSendChat('/wanted')
+end
+
+local function handle_chat(text)
+    if wanted and os.clock()<=wanted.expires then
+        if text=='__________WANTED LIST__________' then
+            wanted.suspects={}
+        elseif wanted.suspects then
+            local name,id=text:match('^(.-) %((%d+)%)%:%s*%d+ outstanding charges?%.$')
+            if id then wanted.suspects[tonumber(id)]=plain_name(name):lower() end
+            if text=='________________________________' or text=='No current wanted suspects.' then
+                local suspects=wanted.suspects
+                wanted=nil
+                if remaining()==0 and playable() then choose_nearby('defend',suspects) end
+            end
+        end
+    end
+    if not pending or os.clock()>pending.expires then return end
+    local name
+    if pending.mode=='defend' then
+        name=text:match('^%* You offered to defend (.-) for %$200%.$')
+    else
+        name=text:match('^%*?%s*You have reduced (.-)\'s sentence by ')
+            or text:match('^%*?%s*You have reduced (.-)\'s jail time by ')
+            or text:match('^%*?%s*You reduced (.-)\'s sentence by ')
+            or text:match('^%*?%s*You have freed (.-) from jail%.$')
+    end
+    if name and plain_name(name):lower()==plain_name(pending.target.name):lower() then
+        local result=pending.mode=='defend' and ' has been lawyered' or ' had their time reduced'
+        notify(labels[pending.mode]..', '..target_text(pending.target)..result..', with '..seconds_text(pending.seconds)..' cooldown')
+        pending=nil
+    end
+end
+
+function Lawyer:register()
+    Config.load(path,cfg)
+    cfg.cooldown[0]=cooldown()
+    for _,mode in ipairs({'defend','free'}) do
+        local command=commands[mode]
+        local bound=mode
+        if sampIsChatCommandDefined and sampIsChatCommandDefined(command) then
+            notify('/'..command..' is already registered. Leone Lawyer uses /leone'..command..' for this session.')
+            command='leone'..command
+        end
+        sampRegisterChatCommand(command,function(args) toggle(bound,args) end)
+        shared.hotkey_manager:register('lawyer_'..bound,cfg[bound].keys,function() nearest(bound) end)
+    end
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
+        return (wanted or pending) and {Rules.trim(Rules.strip(text))}
+    end,handle_chat)
+    shared.event_handler:register('PED_TICK',function() return next(active)~=nil or wanted~=nil or pending~=nil end,function()
+        local now=os.clock()
+        if wanted and now>wanted.expires then wanted=nil;notify('Could not read the HZG wanted list.') end
+        if pending and now>pending.expires then pending=nil end
+        if remaining()>0 or wanted or not playable() then return end
+        local first=last_mode=='defend' and 'free' or 'defend'
+        if not try_target(first) then try_target(first=='defend' and 'free' or 'defend') end
+    end)
+
+    local function overlay_seconds()
+        local seconds=remaining()
+        return seconds==0 and Realign:is_preview('lawyer') and 3 or seconds
+    end
+    local overlay=Overlay.new(cfg.overlay,function()
+        return Realign:is_preview('lawyer') or (cfg.overlay.display[0] and remaining()>0)
+    end,function(self)
+        local seconds=overlay_seconds()
+        if seconds>0 then self:TextRGB(('{FFFFFF}%s Lawyer CD: {28DC40}%ds'):format(fa('CLOCK'),seconds)) end
+    end)
+    overlay.allowed_colors={['28DC40']=true}
+end
+
+function Lawyer:save_config() Config.save(path,cfg) end
+
+function Lawyer:render()
+    imgui.DrawChild('Lawyering',function(width)
+        imgui.Text('Auto Lawyer - /al ID (type /al or same ID again to stop/start)')
+        H.bind('Auto Lawyer nearest wanted','lawyer_defend',cfg.defend,width)
+        imgui.Text('Auto Free - /afree ID (type /afree or same ID again to stop/start)')
+        H.bind('Auto Free nearest prisoner','lawyer_free',cfg.free,width)
+        imgui.Text('Cooldown on /afree and /al');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
+        imgui.InputInt('##lawyer_cooldown',cfg.cooldown)
+        cfg.cooldown[0]=cooldown()
+        imgui.Text('Overlay')
+        imgui.SameLine(width-imgui.ToggleButtonWidth()-104-imgui.GetStyle().ItemSpacing.x)
+        if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
+            Realign:realign_element(function(x,y) cfg.overlay.pos.x[0]=x;cfg.overlay.pos.y[0]=y end,{preview='lawyer'})
+        end
+        imgui.SameLine();imgui.ToggleButton('##lawyer_overlay',cfg.overlay.display)
+        imgui.TextDisabled('The minimum cooldown is 1 minute. Add a few seconds to allow for lag or delay.')
+    end)
+end
+
+return Lawyer
+
+end
+
 package.preload['src.components.Misc'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\components\Misc.lua
 
@@ -1641,6 +1906,8 @@ local Colors = require("src.core.Colors")
 local MainWindow = require("src.ui.MainWindow")
 local Player = require("src.utils.Player")
 local shared = require("src.shared")
+local Rules = require('src.core.Rules')
+local FriskWarning = require('src.components.FriskWarning')
 
 local SPRUNK_WAIT_TIME = 0.050
 local SPECIAL_ACTION_DRINK_SPRUNK = 23
@@ -1687,6 +1954,31 @@ local _portable_radio = {
 local _sprunk_spam_state = {
     last = os.clock(),
 }
+
+local function holding_sprunk()
+    local ok,id=sampGetPlayerIdByCharHandle(PLAYER_PED)
+    return ok and sampGetPlayerSpecialAction(id)==SPECIAL_ACTION_DRINK_SPRUNK
+end
+
+local function handle_sprunk()
+    local state=_sprunk_spam_state
+    if not _config.sprunk_spam.enabled[0] or not holding_sprunk() then
+        state.full,state.removed=false,false
+        return
+    end
+    if sampIsChatInputActive() or sampIsDialogActive() or isPauseMenuActive() or MainWindow:is_open() then return end
+    local health=getCharHealth(PLAYER_PED)
+    if health>=5000000 then health=health-5000000 end
+    if state.full or health>=100 then
+        if not state.removed then
+            state.removed=true
+            setGameKeyState(keys.player.ENTERVEHICLE,255)
+        end
+    elseif not state.removed and os.clock()-state.last>=SPRUNK_WAIT_TIME then
+        setGameKeyState(keys.player.FIREWEAPON,255)
+        state.last=os.clock()
+    end
+end
 
 local _vehicle_storage_state = {
     selected_slot = 0,
@@ -1845,37 +2137,17 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "PED_TICK_ON_FOOT",
-        function(x, y, z)
-            if _config.sprunk_spam.enabled[0] and (getCharHealth(PLAYER_PED) - 5000000) ~= 100.0 then
-                local my_id = select(2, sampGetPlayerIdByCharHandle(PLAYER_PED))
-
-                if sampGetPlayerSpecialAction(my_id) == SPECIAL_ACTION_DRINK_SPRUNK then
-                    return true
-                end
-            end
-            return false
-        end,
-        function()
-            if os.clock() - _sprunk_spam_state.last >= SPRUNK_WAIT_TIME then
-                setGameKeyState(keys.player.FIREWEAPON, 255)
-                _sprunk_spam_state.last = os.clock()
-            end
-        end
+        function() return true end,
+        handle_sprunk
     )
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color, text)
-            if color == Colors.GRAD1 and _config.sniper_frisk_sound.enabled[0] and text == "Weapon: Sniper Rifle." then
-                return true
-            end
-            return false
+        function(_,text)
+            return _config.sprunk_spam.enabled[0] and Rules.trim(Rules.strip(text))=='You already have full health.'
+                and holding_sprunk()
         end,
-        function()
-            clearMissionAudio(1)
-            loadMissionAudio(1, 5205)
-            playMissionAudio(1)
-        end
+        function() _sprunk_spam_state.full=true end
     )
 
     shared.event_handler:register(
@@ -2043,6 +2315,7 @@ function Misc:register()
 
     _register_event_handlers()
     _register_commands()
+    FriskWarning.register(_config.sniper_frisk_sound.enabled)
 
     MainWindow:add_page("miscellaneous", {
         icon = fa("ELLIPSIS"),
@@ -2149,11 +2422,15 @@ function Misc:render_ui_settings()
     imgui.Dummy(imgui.ImVec2(0, 5))
     imgui.DrawChild("Frisking", function(width)
         imgui.Text("Play sound when frisking a player who has a sniper rifle")
-        imgui.SameLine(width - imgui.ToggleButtonWidth())
+        imgui.SameLine(width-imgui.ToggleButtonWidth()-85-imgui.GetStyle().ItemSpacing.x)
+        if imgui.AnimButton(fa('PLAY')..' Play##sniper_warning',imgui.ImVec2(85,0)) then FriskWarning.play() end
+        imgui.SameLine()
         imgui.ToggleButton("##sniper_frisk_sound", _config.sniper_frisk_sound.enabled)
         require("src.components.Extras"):render_frisk(width)
     end)
 
+    imgui.Dummy(imgui.ImVec2(0, 5))
+    require('src.components.Lawyer'):render()
     imgui.Dummy(imgui.ImVec2(0, 5))
     require("src.components.Extras"):render_random()
     require("src.components.Extras"):render_vehicles()
@@ -2950,7 +3227,6 @@ local default_data = {
         { 0, 0, 0, 0.588 }
     ),
 }
-default_data.overlay.display_inside_interiors = imgui.new.bool(false)
 default_data.overlay.display_next_information = imgui.new.bool(true)
 default_data.overlay.display_war_information = imgui.new.bool(true)
 
@@ -3322,6 +3598,7 @@ end
 
 function Turfs:register()
     carboneum.load(CONFIG_PATH, _config)
+    _config.overlay.display_inside_interiors=nil
     -- Automatic captures require a fresh opt-in after each script load.
     _config.auto_capture[0] = false
 
@@ -3358,11 +3635,6 @@ function Turfs:render_ui_settings()
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##turfs_overlay_active_war", _config.overlay.display_war_information)
 
-        imgui.Separator()
-
-        imgui.Text("Enable overlay inside interiors")
-        imgui.SameLine(width - imgui.ToggleButtonWidth())
-        imgui.ToggleButton("##turfs_overlay_inside_interiors", _config.overlay.display_inside_interiors)
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))
@@ -4880,7 +5152,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.1',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.2',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -4968,7 +5240,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.1")
+script_version("1.0.2")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5154,6 +5426,7 @@ local Equipment = require("src.components.Equipment")
 local Find = require("src.components.Find")
 local Fixes = require("src.components.Fixes")
 local Keybinds = require("src.components.Keybinds")
+local Lawyer = require("src.components.Lawyer")
 local Misc = require("src.components.Misc")
 local PedCounter = require("src.components.PedCounter")
 local Phone = require("src.components.Phone")
@@ -5182,6 +5455,7 @@ local components = {
     { component = Find,          overlay = nil },
     { component = Fixes,         overlay = nil },
     { component = Keybinds,      overlay = nil },
+    { component = Lawyer },
     { component = Misc,          overlay = nil },
     { component = PedCounter,    overlay = PedCounterOverlay },
     { component = Phone,         overlay = nil },
@@ -5764,7 +6038,7 @@ local Rules=require('src.core.Rules')
 local function create()
     local cfg=C:get_overlay_config()
     local active=C:get_active_turf()
-    local function visible()return (getActiveInterior()==0 or cfg.display_inside_interiors[0]) and ((not active.refresh_timer:is_paused() and cfg.display_war_information[0]) or (cfg.display_next_information[0] and C:get_next_turf()~=nil)) end
+    local function visible()return (not active.refresh_timer:is_paused() and cfg.display_war_information[0]) or (cfg.display_next_information[0] and C:get_next_turf()~=nil) end
     local overlay=Overlay.new(cfg,function()return Realign:is_preview('capture') or visible() end,function(self)
         if Realign:is_preview('capture') and not visible()then
             self:TextRGB(string.format('{FFFFFF}%s Turf Capper: {5CCCE6}Preview Family (Pershing Sq.) {FFFFFF}| Time Left: {5CCCE6}7 minutes',fa('SHIELD')))
@@ -6621,13 +6895,15 @@ local sections={
         'Automatically retry picking a vehicle lock after a failed attempt','Spam LMB while holding a Sprunk can to quickly recover health'},
     {'miscellaneous','Beacon Resolver','Resolve player IDs when written as "B20" to their actual name instead'},
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
+    {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
+        'Cooldown on /afree and /al','Lawyer cooldown overlay position'},
     {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'/signcheck -> /si'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
     {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border'},
     {'ped_counter','Style Properties##ped_counter','Font size','Padding','Border Thickness','Rounding'},
-    {'capture','Turfs','Show upcoming turf war info','Show active turf war info','Enable overlay inside interiors'},
+    {'capture','Turfs','Show upcoming turf war info','Show active turf war info'},
     {'capture','Capture##turfs','Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
     {'capture','Points','Show upcoming point war info','Show active point war info'},
     {'capture','Capture##points','Automatically capture points - /acapp'},
@@ -8816,10 +9092,11 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/skins/97.png"] = "44278857f7054add79fd9cb9c70b3628f34cb8d682d681f4d11acd430ba71881",
     ["resource/Leone Menu/skins/98.png"] = "3786ceb48ef069801e3797bb970e7b1095efa82bd24ed5398ac98c8ee6acdebd",
     ["resource/Leone Menu/skins/99.png"] = "ae10aefb34af9f93f1a4e71440f175ff0e532b3f8edef47bece75ff69a6f7d7d",
+    ["resource/Leone Menu/Sniperwarning.mp3"] = "f0d9e1db55d578504b54b752b113b2c2ca91937594edc19247c0f2a3947a9654",
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.1", "97e1f959092a258b832bc7f5825b0063c5845804f9b53d07956c096ccec79079", mismatch)
+    package_check.recover("1.0.2", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
