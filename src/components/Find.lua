@@ -4,6 +4,7 @@ local fa=require('fAwesome7')
 local Config=require('src.core.Config')
 local MainWindow=require('src.ui.MainWindow')
 local Player=require('src.utils.Player')
+local Rules=require('src.core.Rules')
 local shared=require('src.shared')
 local Timer=require('src.core.Timer')
 local H=require('src.ui.Helpers')
@@ -15,9 +16,13 @@ local F={}
 local function announce()
     msg(string.format('AutoFind: {6DFB6D}ON{FFFFFF} -> %s (%d) | Level: {6DFB6D}%d{FFFFFF} | Ping: {6DFB6D}%d',cfg.looking_after:gsub('_',' '),state.id,sampGetPlayerScore(state.id),sampGetPlayerPing(state.id)))
 end
-local function stop()
+local function stop(job_denied)
     state.enabled=false;state.next_lookup=nil;state.resume_at=nil
-    msg('AutoFind: {FF0000}OFF')
+    if job_denied then
+        sampAddChatMessage("[Leone Menu] {FFFFFF}Auto Find turned {FF0000}off{FFFFFF}, you're not a {00FF00}detective{FFFFFF}, go to {00FF00}LSPD HQ{FFFFFF} and get the job",0xFF1E3348)
+    else
+        msg('AutoFind: {FF0000}OFF')
+    end
 end
 local function send_if_ready()
     if state.resume_at and os.clock()<state.resume_at then return end
@@ -82,6 +87,9 @@ function F:register()
     shared.event_handler:register('PLAYER_JOIN',function(_,_,_,name)
         return state.enabled and state.next_lookup and name==cfg.looking_after
     end,function() state.next_lookup=0 end)
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
+        return state.enabled and Rules.trim(Rules.strip(text))=='You are not a detective.'
+    end,function() stop(true);return false end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)
         return state.enabled and (text=='You are unable to find this person.' or text=="You can't find that person as they're hidden in one of their turfs." or text=='You have already searched for someone - wait a little.')
     end,function() timer:set_temp_interval(math.max(state.has_sent and timer:time_remaining()or 0,5));state.has_sent=true end)

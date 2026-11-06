@@ -11,7 +11,8 @@ local Parachute=require('src.components.Parachute')
 local E={}
 local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),auto_freq=imgui.new.bool(false),last_frequency=0}
 local file='config/Leone Menu/misc-extras.json'
-local state={para_until=0,last_notice=-10,loaded_until=0}
+local STARTUP_NOTICE_SECONDS=8
+local state={para_until=0,last_notice=-10,notice_ready=false}
 function E:register()
     Config.load(file,cfg)
     -- Legacy nonzero last_frequency was recorded only after a real radio reply.
@@ -38,7 +39,10 @@ function E:register()
     local para=Overlay.setup_overlay_defaults(true,0.015,0.43,14,8,1,2,true,{0,0,0,0.75},true,{30/255,51/255,72/255,1})
     local loaded=Overlay.setup_overlay_defaults(true,0.015,0.50,17,10,1,6,true,{0.035,0.045,0.06,0.96},true,{30/255,51/255,72/255,1})
     Overlay.new(para,function() return os.clock()<state.para_until end,function(self) self:TextRGB('{FFFFFF}Parachute\navailable') end)
-    Overlay.new(loaded,function() return os.clock()<state.loaded_until end,function(self)
+    Overlay.new(loaded,function()
+        return state.notice_ready and (not state.loaded_until or os.clock()<state.loaded_until)
+    end,function(self)
+        state.loaded_until=state.loaded_until or os.clock()+STARTUP_NOTICE_SECONDS
         self:TextRGB('{FFFFFF}Leone Menu')
         imgui.PushFont(nil,13)
         imgui.Text('Version '..require('src.core.Updates').version)
@@ -53,7 +57,7 @@ local function startup_ready()
         and not sampIsDialogActive() and not isPauseMenuActive()
 end
 function E:can_update()
-    return state.loaded_until>0 and os.clock()>=state.loaded_until and startup_ready() and not sampIsChatInputActive()
+    return state.loaded_until~=nil and os.clock()>=state.loaded_until and startup_ready() and not sampIsChatInputActive()
 end
 function E:stop_startup_audio()
     local stream=state.audio
@@ -67,7 +71,8 @@ function E:loaded()
         while not startup_ready() do wait(100) end
         local ok,err=pcall(require('src.components.Fixes').preload_animations)
         if not ok then print('[Leone Menu] Animation preload failed: '..tostring(err)) end
-        Frequency:loaded();state.loaded_until=os.clock()+8
+        Frequency:loaded()
+        state.notice_ready=true
         local ok,stream=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/modloadedin.mp3')
         if ok and stream and stream~=0 then
             state.audio=stream

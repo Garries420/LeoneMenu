@@ -21,6 +21,7 @@ local COMMAND_MODE = {
     NORMAL = 0,
     DD = 1,
 }
+local OFFER_REPLY_SECONDS=3
 
 local VESTER_MODE = { AUTOMATIC = 0, MANUAL = 1 }
 
@@ -65,6 +66,7 @@ local _auto_vest_state = {
     last_vest_recipient_name = "None",
     pending = nil,
     cooldown_until = 0,
+    next_offer_at = 0,
     aim_request = nil,
 }
 
@@ -106,7 +108,7 @@ local function _process_aim_request()
     sampSendChat(string.format('/guard %d 200',request.id))
 end
 
-local function _find_closest_valid_player()
+local function _find_closest_valid_player(attempt)
 
     if _aim_is_held() then
         return nil
@@ -159,8 +161,7 @@ local function _find_closest_valid_player()
                 local player_data = is_valid_player(ped, id)
 
                 if player_data then
-                    local attempt=_auto_vest_state.unconfirmed
-                    if attempt and id==attempt.id and os.clock()<attempt.until_time then
+                    if attempt and id==attempt.id and sampGetPlayerNickname(id)==attempt.name then
                         retry=player_data
                     elseif not closest then
                         closest = player_data
@@ -196,19 +197,24 @@ local function _find_closest_valid_player()
 end
 
 local function _handle_ped_tick()
-    local target = _find_closest_valid_player()
+    local state=_auto_vest_state
+    local now=os.clock()
+    local attempt=state.attempt
+    if now<state.next_offer_at or (attempt and now<attempt.reply_by) then return end
+
+    -- Only consider alternatives once the previous attempt's reply window
+    -- has expired. The original still has to pass the current selection filters.
+    local target = _find_closest_valid_player(attempt)
     if not target then
         return
     end
 
-    _get_active_timer():set_temp_interval(3)
+    _get_active_timer():set_temp_interval(OFFER_REPLY_SECONDS)
 
     local cmd_mode = _config.command_mode.current[0]
     local command = cmd_mode == COMMAND_MODE.NORMAL and "guard" or "guardnear"
 
-    -- If the server does not confirm an offer, give another eligible player
-    -- the next attempt instead of repeatedly selecting the same one.
-    _auto_vest_state.unconfirmed={id=target.player_id,until_time=os.clock()+6}
+    state.attempt={id=target.player_id,name=sampGetPlayerNickname(target.player_id),mode=cmd_mode,reply_by=now+OFFER_REPLY_SECONDS}
     sampSendChat(string.format("/%s %d 200", command, target.player_id))
 end
 
@@ -231,6 +237,8 @@ local function _register_event_handlers()
         end,
         function()
             _auto_vest_state.timers[COMMAND_MODE.NORMAL]:pause()
+            local attempt=_auto_vest_state.attempt
+            if attempt and attempt.mode==COMMAND_MODE.NORMAL then _auto_vest_state.attempt=nil end
             local now=os.clock()
             if not _auto_vest_state.last_job_warning or now-_auto_vest_state.last_job_warning>=5 then
                 _auto_vest_state.last_job_warning=now
@@ -242,22 +250,25 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color, text)
-            if color == Colors.LIGHTBLUE then
-                local player_name = text:match("^%* You offered protection to (.-) for $%d+%.$")
-                if player_name then
-                    return { player_name }
-                end
-            end
-            return false
+        function(_, text)
+            local name=Rules.trim(Rules.strip(text)):match('^%* You offered protection to (.-) for %$%d[%d,]*%.$')
+            return name and {name}
         end,
         function(player_name)
-            _auto_vest_state.unconfirmed=nil
-            _auto_vest_state.last_vest_recipient_name = player_name
-            _auto_vest_state.pending={name=player_name,id=Player:get_player_id_by_name(player_name:gsub(" ","_")),price=200}
+            local state=_auto_vest_state
+            local attempt=state.attempt
+            local raw_name=player_name:gsub(' ','_')
             local timer=_get_active_timer()
+            if attempt and attempt.name:lower()==raw_name:lower() then
+                timer=state.timers[attempt.mode]
+                state.attempt=nil
+            end
+            _auto_vest_state.last_vest_recipient_name = player_name
+            _auto_vest_state.pending={name=player_name,id=Player:get_player_id_by_name(raw_name),price=200}
             timer:trigger()
-            _auto_vest_state.cooldown_until=os.clock()+timer:get_active_interval()
+            local until_time=os.clock()+timer:get_active_interval()
+            state.cooldown_until=until_time
+            state.next_offer_at=math.max(state.next_offer_at,until_time)
         end
     )
 
@@ -274,8 +285,10 @@ local function _register_event_handlers()
         end,
         function(cooldown)
             local seconds=tonumber(cooldown)+2
+            _auto_vest_state.attempt=nil
             _get_active_timer():set_temp_interval(seconds)
             _auto_vest_state.cooldown_until=math.max(_auto_vest_state.cooldown_until,os.clock()+seconds)
+            _auto_vest_state.next_offer_at=math.max(_auto_vest_state.next_offer_at,os.clock()+seconds)
         end
     )
 

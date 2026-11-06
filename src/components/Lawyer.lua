@@ -19,6 +19,7 @@ local commands={defend='al',free='afree'}
 local last_targets,active={},{}
 local pending,wanted,last_mode
 local cooldown_until=0
+local attempted_until=0
 
 local function plain_name(name) return Rules.trim(name):gsub('_',' ') end
 local function notify(text) sampAddChatMessage('[Leone Mods] {FFFFFF}'..text,0xFF1E3348) end
@@ -61,6 +62,7 @@ end
 local function send(mode,target,hotkey)
     local seconds=cooldown()
     cooldown_until=os.clock()+seconds
+    attempted_until=os.clock()+10
     last_mode=mode
     pending=hotkey and {mode=mode,target=target,seconds=seconds,expires=os.clock()+10} or nil
     sampSendChat(('/%s %d%s'):format(mode,target.id,mode=='defend' and ' 200' or ''))
@@ -101,6 +103,14 @@ local function nearest(mode)
 end
 
 local function handle_chat(text)
+    if (text=='You are not a Lawyer!' and (next(active) or wanted or os.clock()<attempted_until))
+        or (wanted and os.clock()<=wanted.expires and text=="You're not a Lawyer / Cop / FBI!") then
+        active={}
+        pending,wanted=nil,nil
+        attempted_until,cooldown_until=0,0
+        msg("You're not a {00FF00}lawyer{FFFFFF}, go get the job at {00FF00}Downtown Los Santos")
+        return false
+    end
     if wanted and os.clock()<=wanted.expires then
         if text=='__________WANTED LIST__________' then
             wanted.suspects={}
@@ -117,7 +127,7 @@ local function handle_chat(text)
     if not pending or os.clock()>pending.expires then return end
     local name
     if pending.mode=='defend' then
-        name=text:match('^%* You offered to defend (.-) for %$200%.$')
+        name=text:match('^%* You offered to defend (.-) for %$%d[%d,]*%.$')
     else
         name=text:match('^%*?%s*You have reduced (.-)\'s sentence by ')
             or text:match('^%*?%s*You have reduced (.-)\'s jail time by ')
@@ -145,8 +155,12 @@ function Lawyer:register()
         shared.hotkey_manager:register('lawyer_'..bound,cfg[bound].keys,function() nearest(bound) end)
     end
     shared.event_handler:register('SERVER_MESSAGE',function(_,text)
-        return (wanted or pending) and {Rules.trim(Rules.strip(text))}
+        return (wanted or pending or next(active) or os.clock()<attempted_until) and {Rules.trim(Rules.strip(text))}
     end,handle_chat)
+    shared.event_handler:register('SEND_COMMAND',function(command)
+        local name=command:match('^/(%S+)')
+        return name and (name:lower()=='defend' or name:lower()=='free')
+    end,function() attempted_until=os.clock()+10 end)
     shared.event_handler:register('PED_TICK',function() return next(active)~=nil or wanted~=nil or pending~=nil end,function()
         local now=os.clock()
         if wanted and now>wanted.expires then wanted=nil;notify('Could not read the HZG wanted list.') end
