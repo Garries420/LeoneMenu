@@ -14,7 +14,7 @@ The menu checks this feed on startup, on reload, hourly, and from Home.
 
 ## Update the menu
 
-1. Advance the menu version in `release.json`, `src/main.lua`, and `src/core/Updates.lua`.
+1. Advance the menu version in `release.json`, `src/main.lua`, and `src/core/Updates.lua`. Carry over after 9 (for example, 1.1.9 to 1.2.0 and 1.9.9 to 2.0.0).
 2. Run `python tools/build.py --rar` with WinRAR installed to generate the full archive and update feed.
 3. Create a GitHub release at the matching `v` tag and upload the complete `Leone Menu V<version>.rar` as its install asset.
 4. After the release is visible, publish the generated `LeoneMenu.lua` and `leone-update-v2.json` together under `docs/`.

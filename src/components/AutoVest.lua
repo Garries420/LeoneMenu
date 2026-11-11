@@ -5,8 +5,8 @@ local fa = require("fAwesome7")
 local imgui = require("upmimgui")
 local keys = require("game.keys")
 
-local AsyncHttpRequest = require("src.utils.AsyncHttpRequest")
 local Updates = require("src.core.Updates")
+local skin_feed = require('src.components.VestSkinFeed').new()
 local H = require("src.ui.Helpers")
 local Rules = require("src.core.Rules")
 local Editor = require("src.ui.AllianceEditor")
@@ -38,6 +38,7 @@ local default_data = {
         },
     },
     vester_mode = imgui.new.int(VESTER_MODE.AUTOMATIC),
+    skin_url = '',
     offer_if_armor_below = imgui.new.int(48),
     groups = {},
     aim = {keys={}},
@@ -131,7 +132,7 @@ local function _find_closest_valid_player(attempt)
                 for _,v in ipairs(group.skins) do if v==skin then match=true end end
             end
         end
-        if not match then return false end
+        if not match and not skin_feed.skins[skin] then return false end
 
         local health=sampGetPlayerHealth(id)
         if health<=0 then return false end
@@ -342,6 +343,7 @@ end
 
 function AutoVest:register()
     carboneum.load(CONFIG_PATH, _config)
+    skin_feed:set_url(_config.skin_url)
     if _config.command_mode.intervals[COMMAND_MODE.DD][0]==10 then _config.command_mode.intervals[COMMAND_MODE.DD][0]=7 end
     VestRules.register()
 
@@ -358,6 +360,13 @@ function AutoVest:register()
         if connected then _auto_vest_state.aim_request={id=id,name=sampGetPlayerNickname(id)} end
     end)
     shared.event_handler:register('PED_TICK',function()return _auto_vest_state.aim_request~=nil end,_process_aim_request)
+    shared.event_handler:register('PED_TICK',function()return skin_feed.url~='' or skin_feed.request or _ui_state.save_url_at end,function()
+        skin_feed:tick()
+        if _ui_state.save_url_at and os.clock()>=_ui_state.save_url_at then
+            _ui_state.save_url_at=nil
+            if not self:save_config() then _ui_state.save_url_at=os.clock()+5 end
+        end
+    end)
     shared.event_handler:register('SERVER_MESSAGE',function(_,text)
         local offer=_auto_vest_state.pending
         if not offer then return false end
@@ -404,7 +413,9 @@ function AutoVest:render_ui_settings()
         imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
-        imgui.Text('Alliance skins to be vested');imgui.SameLine(width-290)
+        local url_width=60
+        local mode_right=width-url_width-imgui.GetStyle().ItemSpacing.x
+        imgui.Text('Alliance skins to be vested');imgui.SameLine(mode_right-290)
         if imgui.AnimButton(fa('GEAR')) then
             Editor:show(_config.groups,function(groups)
                 local previous=_config.groups
@@ -414,9 +425,21 @@ function AutoVest:render_ui_settings()
                 return false
             end)
         end
-        imgui.SameLine(width-250)
+        imgui.SameLine(mode_right-250)
         imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
         if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
+        imgui.SameLine(width-url_width)
+        if imgui.AnimButton('URL',imgui.ImVec2(url_width,0)) then _ui_state.skin_url_open=not _ui_state.skin_url_open end
+        if imgui.IsItemHovered() then imgui.SetTooltip('Add a URL to an HTML skin list. Auto Vest will also vest players with those skin IDs.') end
+        if _ui_state.skin_url_open then
+            local url,changed=H.input('##vest_skin_url',_config.skin_url,'HTML url here...',imgui.GetContentRegionAvail().x,2048)
+            if changed then
+                _config.skin_url=url
+                skin_feed:set_url(url)
+                _ui_state.save_url_at=os.clock()+0.5
+            end
+            if skin_feed.status then imgui.TextDisabled('%s',skin_feed.status) end
+        end
         imgui.Separator()
         imgui.Text('Vest interval (seconds)');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##vest_interval',_config.command_mode.intervals[_config.command_mode.current[0]])

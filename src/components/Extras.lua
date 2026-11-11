@@ -8,13 +8,15 @@ local Player=require('src.utils.Player')
 local Overlay=require('src.ui.Overlay')
 local Frequency=require('src.components.Frequency')
 local Parachute=require('src.components.Parachute')
+local ChatDedup=require('src.components.ChatDedup')
 local E={}
-local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),auto_freq=imgui.new.bool(false),last_frequency=0}
+local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),anti_spam=imgui.new.bool(false),auto_freq=imgui.new.bool(false),last_frequency=0}
 local file='config/Leone Menu/misc-extras.json'
 local STARTUP_NOTICE_SECONDS=8
 local state={para_until=0,last_notice=-10,notice_ready=false}
 function E:register()
     Config.load(file,cfg)
+    ChatDedup.configure(cfg.anti_spam)
     -- Legacy nonzero last_frequency was recorded only after a real radio reply.
     if cfg.frequency_known==nil then cfg.frequency_known=cfg.last_frequency~=0 end
     if cfg.frequency_initialized==nil then cfg.frequency_initialized=cfg.frequency_known or cfg.auto_freq[0] end
@@ -100,6 +102,12 @@ function E:render_random()
     imgui.DrawChild('Random',function(width)
         imgui.Text('Parachute')
         H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,"Skips over the parachute to the next available weapon or fist, displays a small overlay to notify you that you got a parachute. the parachute appears again when you're falling")
+        imgui.Separator()
+        if H.toggle('Anti Spam','anti_spam',cfg.anti_spam,width,
+            'Prevent repeated messages by showing the count at the end of the chat.\ne.g. [x2] would mean the same chat was repeated 2 times in a row.') then
+            ChatDedup.configure(cfg.anti_spam)
+            self:save_config()
+        end
         imgui.Separator()
         imgui.Text('Shortcuts');imgui.Text('Sign check - /si')
         imgui.Text('Change insurance location - /ins')

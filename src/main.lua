@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.13")
+script_version("1.1.0")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -15,6 +15,7 @@ imgui.SetDpiScalingMode(3)
 
 require("src.ui.Widgets")
 local shared = require("src.shared")
+local ChatDedup = require("src.components.ChatDedup")
 
 local SCRIPT_TAG = '{1E3348}[Leone Menu] {FFFFFF}'
 local SCRIPT_COLOR = 0xFF1E3348
@@ -272,7 +273,12 @@ local function process_player_tick()
 end
 
 function sampev.onServerMessage(color, text)
-    return shared.event_handler:process("SERVER_MESSAGE", color, text)
+    local result=shared.event_handler:process("SERVER_MESSAGE",color,text)
+    return ChatDedup.server(color,text,result)
+end
+
+function sampev.onChatMessage(id,text)
+    return ChatDedup.player(id,text)
 end
 
 function sampev.onSendDeathNotification(reason,killer)

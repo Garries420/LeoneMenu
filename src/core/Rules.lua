@@ -22,6 +22,18 @@ function R.alliance(html)
     if date and not date:match('^%d%d/%d%d/%d%d%d%d %d%d:%d%d[AP]M CES?T$') then return nil end
     return {version=version,skins=skins,date=date}
 end
+function R.html_skins(html)
+    if type(html)~='string' or #html>131072 then return nil end
+    local document=html:lower():gsub('^\239\187\191',''):gsub('<!%-%-.-%-%->',' ')
+    local content=document:match('<pre%s[^>]-id%s*=%s*"alliance%-skins"[^>]*>(.-)</pre%s*>')
+        or document:match('<pre%s*>(.-)</pre%s*>') or document:match('<pre%s[^>]*>(.-)</pre%s*>')
+        or document:match('<body%s*>(.-)</body%s*>') or document:match('<body%s[^>]*>(.-)</body%s*>') or document
+    local list_tags={br=true,p=true,div=true,ul=true,ol=true,li=true,code=true,span=true}
+    content=content:gsub('&nbsp;',' '):gsub('</?([%a]+)[^>]*>',function(tag)
+        return list_tags[tag] and ' ' or '?'
+    end)
+    return R.skins(content)
+end
 function R.frequency(text)
     text=R.strip(text)
     local body=text:match('Family MOTD:%s*(.+)')
