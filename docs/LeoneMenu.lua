@@ -16,6 +16,7 @@ local Player = require("src.utils.Player")
 local shared = require("src.shared")
 local Timer = require("src.core.Timer")
 local Rules = require("src.core.Rules")
+local VestRules=require('src.core.VestRules')
 
 local ACCEPT_VEST = {
     DEFAULT_PRICE = 200,
@@ -25,7 +26,6 @@ local ACCEPT_VEST = {
 }
 
 local CONFIG_PATH = "config/Leone Menu/acceptvest.json"
-local OUTSIDE_POINT_MESSAGE = "You can't heal if you were recently shot, except within points, events, minigames, and paintball."
 
 local default_data = {
     accept_below = imgui.new.int(50),
@@ -69,6 +69,7 @@ local function _set_pending_offer(from_id, price)
 end
 
 local function _handle_ped_tick(x, y, z)
+    if not VestRules.can_accept() then _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE);return end
     if not _accept_vest_state.is_enabled[0] then
         return
     end
@@ -114,17 +115,6 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color,text)
-            return _accept_vest_state.is_enabled[0] and Rules.strip(text)==OUTSIDE_POINT_MESSAGE
-        end,
-        function()
-            _accept_vest_state.is_enabled[0]=false
-            msg("Not at point detected, Auto Vest has been turned {FF0000}OFF")
-        end
-    )
-
-    shared.event_handler:register(
-        "SERVER_MESSAGE",
         function(color, text)
             if color == Colors.LIGHTBLUE then
                 local player_name, price = text:match(
@@ -137,6 +127,7 @@ local function _register_event_handlers()
             return false
         end,
         function(player_name, price)
+            if not VestRules.can_accept() then _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE);return end
             local raw_name = player_name:gsub(" ", "_")
             local player_id = Player:get_player_id_by_name(raw_name)
 
@@ -248,14 +239,18 @@ end
 
 function AcceptVest:register()
     carboneum.load(CONFIG_PATH, _config)
+    VestRules.register()
 
     _register_event_handlers()
     _register_commands()
 
     shared.hotkey_manager:register('manual_accept_vest',_config.manual.keys,function()
-        if _config.manual.enabled[0] then
+        if _config.manual.enabled[0] and VestRules.can_accept() then
             sampSendChat('/accept bodyguard')
         end
+    end)
+    shared.event_handler:register('HOSPITAL_ADMITTED',function()return true end,function()
+        _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE)
     end)
 end
 
@@ -275,11 +270,16 @@ function AcceptVest:render_ui_settings()
     local H=require('src.ui.Helpers')
     imgui.DrawChild('Accept Vest',function(width)
         H.toggle('Automatically accept vest offers priced at $200 - /av','accept_vest',_accept_vest_state.is_enabled,width)
+        imgui.Separator()
         imgui.Text('Accept if vest is below');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##accept_below',_config.accept_below);_config.accept_below[0]=math.max(0,math.min(100,_config.accept_below[0]))
+        imgui.Separator()
         H.toggle('Manual Accept','manual_accept_enable',_config.manual.enabled,width)
+        imgui.Separator()
         H.bind('Manually accept vest','manual_accept_vest',_config.manual,width)
+        imgui.Separator()
         H.toggle('Automatically stop accepting vest offers upon point completion','disable_after_point',_config.should_disable_after_point,width)
+        imgui.Separator()
         H.toggle('Show offered-by overlay','offered_by',_config.overlay.display,width)
     end)
 end
@@ -306,6 +306,7 @@ local Overlay = require("src.ui.Overlay")
 local Player = require("src.utils.Player")
 local shared = require("src.shared")
 local Timer = require("src.core.Timer")
+local VestRules=require('src.core.VestRules')
 
 local COMMAND_MODE = {
     NORMAL = 0,
@@ -323,7 +324,7 @@ local default_data = {
         current = imgui.new.int(COMMAND_MODE.NORMAL),
         intervals = {
             [COMMAND_MODE.NORMAL] = imgui.new.int(13),
-            [COMMAND_MODE.DD] = imgui.new.int(10),
+            [COMMAND_MODE.DD] = imgui.new.int(7),
         },
     },
     vester_mode = imgui.new.int(VESTER_MODE.AUTOMATIC),
@@ -378,7 +379,7 @@ local function _process_aim_request()
     local request=_auto_vest_state.aim_request
     if not request then return end
     local function cancel()_auto_vest_state.aim_request=nil end
-    if not sampIsLocalPlayerSpawned() or sampGetGamestate()~=3 or is_cursor_active()
+    if not VestRules.can_offer(true) or sampGetGamestate()~=3 or is_cursor_active()
         or sampIsChatInputActive() or sampIsDialogActive() or isPauseMenuActive()
         or MainWindow:is_open() or (isGameWindowForeground and not isGameWindowForeground())
         or not sampIsPlayerConnected(request.id) or sampGetPlayerNickname(request.id)~=request.name then
@@ -410,7 +411,8 @@ local function _find_closest_valid_player(attempt)
     local connected,local_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
 
     local function is_valid_player(player, id)
-        if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player) then return false end
+        if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player)
+            or sampIsPlayerPaused(id) or isCharPlayingAnim(player,'KILL_Knife_Ped_Die') then return false end
 
         local skin=getCharModel(player)
         local match=_config.vester_mode[0]==VESTER_MODE.AUTOMATIC and Updates.is_alliance(skin)
@@ -488,6 +490,7 @@ end
 
 local function _handle_ped_tick()
     local state=_auto_vest_state
+    if not VestRules.can_offer(false) then state.attempt=nil;return end
     local now=os.clock()
     local attempt=state.attempt
     if now<state.next_offer_at or (attempt and now<attempt.reply_by) then return end
@@ -601,29 +604,14 @@ local function _register_commands()
         end
     )
 
-    sampRegisterChatCommand('avmode',function(args)
-        local modes={automatic=0,manual=1}
-        if modes[args]==nil then return msg('USAGE: /avmode automatic/manual') end
-        _config.vester_mode[0]=modes[args]
-    end)
-
-    sampRegisterChatCommand(
-        "ddmode",
-        function()
-            local old_mode = _config.command_mode.current[0]
-            local modes_reverse = {
-                [COMMAND_MODE.NORMAL] = "Normal",
-                [COMMAND_MODE.DD] = "DD"
-            }
-
-            _config.command_mode.current[0] = old_mode == COMMAND_MODE.DD and COMMAND_MODE.NORMAL or COMMAND_MODE.DD
-
-            msg(string.format(
-                "Vester Command Mode has been switched to '%s' mode (Previous: '%s' mode)",
-                modes_reverse[_config.command_mode.current[0]], modes_reverse[old_mode]
-            ))
-        end
-    )
+    local function swap_mode()
+        local mode=_config.command_mode.current[0]==COMMAND_MODE.DD and COMMAND_MODE.NORMAL or COMMAND_MODE.DD
+        _config.command_mode.current[0]=mode
+        local name,command=mode==COMMAND_MODE.DD and 'DD' or 'Normal',mode==COMMAND_MODE.DD and '/guardnear' or '/guard'
+        msg(('Auto Vest Mode has changed to {00FF00}%s{FFFFFF} (%s) %ds delay'):format(name,command,_config.command_mode.intervals[mode][0]))
+    end
+    sampRegisterChatCommand('avmode',swap_mode)
+    sampRegisterChatCommand('ddmode',swap_mode)
 end
 
 local AutoVest = {}
@@ -644,9 +632,15 @@ end
 
 function AutoVest:register()
     carboneum.load(CONFIG_PATH, _config)
+    if _config.command_mode.intervals[COMMAND_MODE.DD][0]==10 then _config.command_mode.intervals[COMMAND_MODE.DD][0]=7 end
+    VestRules.register()
 
     _register_event_handlers()
     _register_commands()
+    shared.event_handler:register('HOSPITAL_ADMITTED',function()return true end,function()
+        _auto_vest_state.pending=nil;_auto_vest_state.attempt=nil;_auto_vest_state.aim_request=nil
+        _auto_vest_state.cooldown_until=0
+    end)
     shared.hotkey_manager:register('aim_vest',_config.aim.keys,function()
         local ok,ped=getCharPlayerIsTargeting(PLAYER_HANDLE)
         if not ok or not doesCharExist(ped) then return end
@@ -693,9 +687,11 @@ end
 function AutoVest:render_ui_settings()
     imgui.DrawChild('Auto Vest',function(width)
         H.toggle('Automatically vest nearby players - /avest','auto_vest',_config.is_enabled,width)
+        imgui.Separator()
         H.bind('Aim and vest','aim_vest',_config.aim,width)
         imgui.Separator()
-        imgui.Text('Command mode');imgui.SameLine(width-250)
+        imgui.Text('Command mode - /avmode to swap between Normal and DD')
+        imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
         imgui.Text('Alliance skins to be vested');imgui.SameLine(width-290)
@@ -711,15 +707,18 @@ function AutoVest:render_ui_settings()
         imgui.SameLine(width-250)
         imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
         if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
+        imgui.Separator()
         imgui.Text('Vest interval (seconds)');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##vest_interval',_config.command_mode.intervals[_config.command_mode.current[0]])
         local interval=_config.command_mode.intervals[_config.command_mode.current[0]];interval[0]=math.max(1,interval[0])
+        imgui.Separator()
         imgui.Text('Offer if vest is below');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##offer_below',_config.offer_if_armor_below);_config.offer_if_armor_below[0]=math.max(0,math.min(100,_config.offer_if_armor_below[0]))
+        imgui.Separator()
         H.toggle('Show offered-to overlay','offered_to',_config.overlay.display,width)
     end)
     require('src.components.AcceptVest'):render_ui_settings()
-    H.position({_config.overlay},'vesting')
+    H.position({_config.overlay,require('src.components.AcceptVest'):get_overlay_config()},'vesting')
     Editor:render()
 end
 return AutoVest
@@ -760,7 +759,31 @@ default_data.bind={keys={}}
 local H=require('src.ui.Helpers')
 local shared=require('src.shared')
 local locations=require('src.core.CustomLocations')
+local Rules=require('src.core.Rules')
 local show_locations=false
+local backup_active=false
+local interior_labels,labels_scanned={},false
+local interior_game_text_until=0
+local function observe_label(id,text)
+    interior_labels[id]=type(text)=='string' and Rules.trim(Rules.strip(text)):upper()=='INTERIOR' or nil
+end
+local function interior_label_visible()
+    local can_read=sampTextdrawIsExists and sampTextdrawGetString
+    if not labels_scanned then
+        labels_scanned=true
+        -- A script reload can occur after the server has already shown the label.
+        if can_read then
+            for id=0,2047 do if sampTextdrawIsExists(id) then observe_label(id,sampTextdrawGetString(id)) end end
+        end
+    end
+    for id in pairs(interior_labels)do
+        if can_read then
+            if sampTextdrawIsExists(id) then observe_label(id,sampTextdrawGetString(id)) else interior_labels[id]=nil end
+        end
+        if interior_labels[id] then return true end
+    end
+    return os.clock()<interior_game_text_until
+end
 
 local _config = default_data
 
@@ -779,8 +802,18 @@ end
 
 function Backup:register()
     carboneum.load(CONFIG_PATH, _config)
+    shared.event_handler:register('SHOW_TEXTDRAW',function()return true end,function(id,data)observe_label(id,data.text)end)
+    shared.event_handler:register('TEXTDRAW_SET_STRING',function()return true end,observe_label)
+    shared.event_handler:register('HIDE_TEXTDRAW',function()return true end,function(id)interior_labels[id]=nil end)
+    shared.event_handler:register('DISPLAY_GAME_TEXT',function()return true end,function(_,time,text)
+        interior_game_text_until=Rules.trim(Rules.strip(text)):upper()=='INTERIOR' and os.clock()+time/1000 or 0
+    end)
 
     shared.hotkey_manager:register('faction_backup',_config.bind.keys,function()
+        local radio_only=interior_label_visible()
+        if backup_active and not radio_only then
+            sampSendChat('/nobackup');backup_active=false;return
+        end
         local x,y,z=getCharCoordinates(PLAYER_PED)
         local interior=getActiveInterior()
         local special=locations.find(x,y,z,interior)
@@ -801,6 +834,7 @@ function Backup:register()
             end
         end
         sampSendChat("/pr I need urgent backup, " .. wanted .. "Currently at " .. place .. ending)
+        if not radio_only then sampSendChat('/fbackup');backup_active=true end
     end)
     MainWindow:add_page("backup", {
         icon = fa("BULLHORN"),
@@ -848,6 +882,7 @@ function Backup:render_ui_settings()
         imgui.SameLine(width-180)
         local keys=shared.hotkey_manager:draw_key_editor('faction_backup',imgui.ImVec2(180,0))
         if keys then _config.bind.keys=keys end
+        imgui.Separator()
         H.toggle('Mention wanted level','backup_wanted',_config.wanted,width)
     end)
 
@@ -899,16 +934,25 @@ local function ended(name)
     -- Requested for every point end, including players who never attended.
     for i=1,5 do sampAddChatMessage('{FF0000}'..warning,0xFFFF0000) end
     if flagged and not isCharInAnyCar(PLAYER_PED) then
-        require('src.ui.Dialogs').show('Leone Menu - Point ended','\n\t{FF0000}'..warning..'\n',0,'OK',nil,true,function() return not isCharInAnyCar(PLAYER_PED) end)
+        require('src.ui.Dialogs').show('Leone Menu - Point ended','\n\t{FF0000}'..warning..'\n',0,'OK',nil,true,function() return not isCharInAnyCar(PLAYER_PED) end,'point_ended',true)
     end
 end
 function C:register()
+    require('src.components.Regroup'):register()
     require('src.ui.MainWindow'):add_page('capture',{title='Turfs & Points',icon=fa('MAP'),render_function=function()
         require('src.components.Turfs'):render_ui_settings()
         require('src.components.Points'):render_ui_settings()
-        H.position({require('src.components.Turfs'):get_overlay_config()},'capture')
+        imgui.DrawChild('Regroup checker',function()
+            imgui.TextWrapped('Checks the surrounding area for our own members and displays who is not there when compared to /members list')
+            imgui.Text('Quick usage: /rgcheck')
+            if imgui.AnimButton('RGCHECK')then require('src.components.Regroup'):run()end
+        end)
+        H.position({require('src.components.Turfs'):get_overlay_config(),Points:get_overlay_config()},'capture')
     end})
     shared.event_handler:register('POINT_ENDED',function(name) return {name} end,ended)
+    shared.event_handler:register('LOCAL_DAMAGE',function(player,damage)
+        return player>=0 and player<65535 and damage>0
+    end,function() require('src.ui.Dialogs').cancel('point_ended') end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)
         local name=R.strip(text):match('^.- has taken control of the (.-) for .-%.$')
         return name and {name} or false
@@ -1103,13 +1147,16 @@ function E:save_config() return Config.save(file,cfg) end
 function E:render_ui_settings()
     imgui.DrawChild('Blackmarket',function(width)
         imgui.Text('Select mode: /bms or /bms [Mode Number]')
+        imgui.Separator()
         H.toggle('Keybind enabled','bm_enabled',cfg.enabled,width)
+        imgui.Separator()
         H.bind('Keybind','blackmarket',cfg,width)
         imgui.Separator();imgui.Text('Keybind Modes:')
         for i,name in ipairs(names) do
             if cfg.mode[0]==i then imgui.TextColored(imgui.ImVec4(0,1,0,1),i..'. '..name) else imgui.Text(i..'. '..name) end
         end
         imgui.Separator();imgui.Text('Current Mode');imgui.SameLine(width-160);imgui.SetNextItemWidth(160);imgui.InputInt('##bm_mode',cfg.mode);cfg.mode[0]=math.max(1,math.min(4,cfg.mode[0]))
+        imgui.Separator()
         imgui.Text('Purchase gap (ms)');imgui.SameLine(width-160);imgui.SetNextItemWidth(160);imgui.InputInt('##bm_delay',cfg.delay);cfg.delay[0]=math.max(MIN_PURCHASE_GAP,math.min(5000,cfg.delay[0]))
     end)
 end
@@ -1156,6 +1203,15 @@ function E:register()
     end):register(shared.event_handler)
     sampRegisterChatCommand('skippara',function() cfg.skip[0]=not cfg.skip[0];msg('Skip parachute on scroll has been {1E3348}'..(cfg.skip[0] and 'enabled' or 'disabled')..'{FFFFFF}.') end)
     sampRegisterChatCommand('si',function(args) sampSendChat('/signcheck'..(args~='' and (' '..args) or '')) end)
+    sampRegisterChatCommand('ins',function(args)
+        local n=tonumber(args)
+        if not n or n%1~=0 or n<1 or n>6 then
+            msg('/ins [1-6]')
+            sampAddChatMessage('1: All Saints Hospital - 2: County General Hospital - 3: Blueberry Clinic - 4: Maximus Club - 5: First House - 6: Second House',0xFFFFFFFF)
+            return
+        end
+        sampSendChat('/insurance '..n)
+    end)
     local para=Overlay.setup_overlay_defaults(true,0.015,0.43,14,8,1,2,true,{0,0,0,0.75},true,{30/255,51/255,72/255,1})
     local loaded=Overlay.setup_overlay_defaults(true,0.015,0.50,17,10,1,6,true,{0.035,0.045,0.06,0.96},true,{30/255,51/255,72/255,1})
     Overlay.new(para,function() return os.clock()<state.para_until end,function(self) self:TextRGB('{FFFFFF}Parachute\navailable') end)
@@ -1211,7 +1267,9 @@ function E:render_random()
     imgui.DrawChild('Random',function(width)
         imgui.Text('Parachute')
         H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,"Skips over the parachute to the next available weapon or fist, displays a small overlay to notify you that you got a parachute. the parachute appears again when you're falling")
-        imgui.Text('Shortcuts');imgui.Text('/signcheck -> /si')
+        imgui.Separator()
+        imgui.Text('Shortcuts');imgui.Text('Sign check - /si')
+        imgui.Text('Change insurance location - /ins')
     end)
 end
 function E:render_vehicles()
@@ -1319,7 +1377,7 @@ function F:register()
         return state.enabled and Rules.trim(Rules.strip(text))=='You are not a detective.'
     end,function() stop(true);return false end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)
-        return state.enabled and (text=='You are unable to find this person.' or text=="You can't find that person as they're hidden in one of their turfs." or text=='You have already searched for someone - wait a little.')
+        return state.has_sent and (text=='You are unable to find this person.' or text=="You can't find that person as they're hidden in one of their turfs." or text=='You have already searched for someone - wait a little.')
     end,function() timer:set_temp_interval(math.max(state.has_sent and timer:time_remaining()or 0,5));state.has_sent=true end)
     shared.event_handler:register('SEND_COMMAND',function(command)
         local name=command:match('^/(%S+)')
@@ -1331,12 +1389,22 @@ function F:register()
     MainWindow:add_page('find',{title='Autofind',icon=fa('LOCATION_DOT'),render_function=function() F:render_ui_settings() end})
 end
 function F:save_config() return Config.save('config/Leone Menu/autofind.json',cfg) end
+function F:cooldown_remaining()
+    return state.has_sent and math.ceil(timer:time_remaining()) or 0
+end
+function F:find_once(id)
+    if self:cooldown_remaining()>0 or not sampIsPlayerConnected(id) then return false end
+    timer:trigger();state.has_sent=true
+    samp_send_hidden_command('find',tostring(id))
+    return true
+end
 function F:render_ui_settings()
     imgui.DrawChild('Autofind',function(width)
         imgui.Text('Find Player:');imgui.Text('CMD: /af [Player ID / Name]');imgui.Separator()
         imgui.Text('Cohort Player:');imgui.Text('CMD: /afco [Player ID / Name]')
         imgui.TextWrapped('Note: It will find the player as well as their cohort.');imgui.Separator()
-        imgui.Text('Adjust Cooldown:');imgui.Text('Currently (s)');imgui.SameLine();imgui.SetNextItemWidth(160);imgui.InputInt('##find_interval',cfg.interval);cfg.interval[0]=math.max(15,math.min(140,cfg.interval[0]))
+        imgui.Text('Adjust Cooldown (seconds):');imgui.Spacing()
+        imgui.Text('Currently');imgui.SameLine();imgui.SetNextItemWidth(160);imgui.InputInt('##find_interval',cfg.interval);cfg.interval[0]=math.max(15,math.min(140,cfg.interval[0]))
         imgui.Separator();imgui.Text('Suggested Cooldown:')
         for i,v in ipairs({125,85,65,35,20}) do imgui.Text('Level '..i..': '..v..'s') end
         imgui.TextWrapped('Note: To prevent lag issues add an extra 4-5 seconds.')
@@ -1659,7 +1727,7 @@ function Home:register()
         if imgui.AnimButton('Check for updates') then Home.update_check_requested=true end
         imgui.TextWrapped(U.status)
         imgui.TextWrapped(U.skins_status)
-        imgui.Text('Version Date: '..(U.alliance.date or 'Unavailable'))
+        imgui.Text('Alliance Skin Date: '..(U.alliance.date or 'Unavailable'))
         if imgui.IsItemHovered() then imgui.SetTooltip('Day/Month/year - Swedish Timezone') end
     end})
     MainWindow:select_page('home')
@@ -1745,7 +1813,7 @@ local shared=require('src.shared')
 
 local Lawyer={}
 local path='config/Leone Menu/lawyer.json'
-local cfg={cooldown=imgui.new.int(66),defend={keys={}},free={keys={}},overlay=Overlay.setup_overlay_defaults(
+local cfg={cooldown=imgui.new.int(70),defend={keys={}},free={keys={}},overlay=Overlay.setup_overlay_defaults(
     true,0.015,0.64,14,6,1,2,true,{0,0,0,0.588},true,{0,0,0,0.588})}
 local labels={defend='Auto Lawyer',free='Auto Free'}
 local commands={defend='al',free='afree'}
@@ -1871,6 +1939,10 @@ local function handle_wanted_reply(color,text)
 end
 
 local function handle_chat(color,text)
+    local wait_seconds=text:match('^You must wait (%d+) seconds? before you can defend again!$')
+    if wait_seconds and os.clock()<attempted_until then
+        cooldown_until=math.max(cooldown_until,os.clock()+tonumber(wait_seconds)+1)
+    end
     if (text=='You are not a Lawyer!' and (next(active) or wanted or os.clock()<attempted_until))
         or (wanted and os.clock()<=wanted.expires and text=="You're not a Lawyer / Cop / FBI!") then
         active={}
@@ -1900,6 +1972,7 @@ end
 
 function Lawyer:register()
     Config.load(path,cfg)
+    if cfg.cooldown[0]==66 then cfg.cooldown[0]=70 end
     cfg.cooldown[0]=cooldown()
     for _,mode in ipairs({'defend','free'}) do
         local command=commands[mode]
@@ -1948,23 +2021,27 @@ function Lawyer:register()
 end
 
 function Lawyer:save_config() return Config.save(path,cfg) end
+function Lawyer:get_overlay_config()return cfg.overlay end
 
 function Lawyer:render()
     imgui.DrawChild('Lawyering',function(width)
         imgui.Text('Auto Lawyer - /al ID (type /al or same ID again to stop/start)')
         H.bind('Auto Lawyer nearest wanted','lawyer_defend',cfg.defend,width)
+        imgui.Separator()
         imgui.Text('Auto Free - /afree ID (type /afree or same ID again to stop/start)')
         H.bind('Auto Free nearest prisoner','lawyer_free',cfg.free,width)
+        imgui.Separator()
         imgui.Text('Cooldown on /afree and /al');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##lawyer_cooldown',cfg.cooldown)
         cfg.cooldown[0]=cooldown()
-        imgui.Text('Overlay')
-        imgui.SameLine(width-imgui.ToggleButtonWidth()-104-imgui.GetStyle().ItemSpacing.x)
-        if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
-            Realign:realign_element(function(x,y) cfg.overlay.pos.x[0]=x;cfg.overlay.pos.y[0]=y end,{preview='lawyer'})
-        end
-        imgui.SameLine();imgui.ToggleButton('##lawyer_overlay',cfg.overlay.display)
         imgui.TextDisabled('The minimum cooldown is 1 minute. Add a few seconds to allow for lag or delay.')
+        imgui.Separator()
+        H.position_text(width,imgui.ToggleButtonWidth()+104+imgui.GetStyle().ItemSpacing.x)
+        if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
+            H.realign({cfg.overlay},'lawyer')
+        end
+        H.position_tip()
+        imgui.SameLine();imgui.ToggleButton('##lawyer_overlay',cfg.overlay.display)
     end)
 end
 
@@ -2002,6 +2079,9 @@ local default_data = {
         enabled = imgui.new.bool(true),
     },
     auto_accept_repair = {
+        enabled = imgui.new.bool(true),
+    },
+    auto_accept_lawyer = {
         enabled = imgui.new.bool(true),
     },
     auto_pick_lock = {
@@ -2221,6 +2301,18 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
+        function(_, text)
+            if not _config.auto_accept_lawyer.enabled[0] then return false end
+            local offer=Rules.trim(Rules.strip(text))
+            local price=offer:match('^%* Lawyer .+ wants to defend you for %$(%d[%d,]*), %(type /accept defense%) to accept%.$')
+            return price and tonumber((price:gsub(',','')))==200
+                and sampGetGamestate()==3 and sampIsLocalPlayerSpawned()
+        end,
+        function() sampSendChat('/accept defense') end
+    )
+
+    shared.event_handler:register(
+        "SERVER_MESSAGE",
         function(color, text)
             if color == Colors.WHITE and _config.auto_pick_lock.enabled[0] and text == "You have failed to pick the lock!" then
                 return true
@@ -2432,6 +2524,7 @@ function Misc:render_portable_radio()
         if imgui.ToggleButton("##show_frequency", _config.portable_radio.show_frequency) then
             Misc:save_config()
         end
+        imgui.Separator()
         require("src.components.Extras"):render_radio(width)
     end)
 end
@@ -2488,6 +2581,12 @@ function Misc:render_ui_settings()
         imgui.Text("Automatically accept $1 repair offers from players")
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##auto_accept_repair", _config.auto_accept_repair.enabled)
+        imgui.Separator()
+
+        imgui.Text('Automatically accept lawyer offered at $200')
+        imgui.SameLine(width - imgui.ToggleButtonWidth())
+        if imgui.ToggleButton('##auto_accept_lawyer', _config.auto_accept_lawyer.enabled) then Misc:save_config() end
+        imgui.Separator()
         require("src.components.Extras"):render_repair(width)
 
         imgui.Separator()
@@ -2517,6 +2616,7 @@ function Misc:render_ui_settings()
         if imgui.AnimButton(fa('PLAY')..' Play##sniper_warning',imgui.ImVec2(85,0)) then FriskWarning.play() end
         imgui.SameLine()
         imgui.ToggleButton("##sniper_frisk_sound", _config.sniper_frisk_sound.enabled)
+        imgui.Separator()
         require("src.components.Extras"):render_frisk(width)
     end)
 
@@ -2883,7 +2983,9 @@ function P:save_config() return Config.save('config/Leone Menu/phone.json',cfg) 
 function P:render_ui_settings()
     imgui.DrawChild('Phone',function(width)
         H.toggle('Show Player ID','sms_id',cfg.show_id,width)
+        imgui.Separator()
         H.toggle('Colorize Name','sms_color',cfg.colorize,width)
+        imgui.Separator()
         H.toggle('Hide Extra Lines','sms_extra',cfg.hide_extra,width,'Removes cellphone emotes, text message delivered and other extra phone lines from chat.')
     end)
     imgui.DrawChild('SMS Players',function()
@@ -3267,10 +3369,7 @@ function Points:render_ui_settings()
         imgui.Text("Show active point war info")
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##points_overlay_active_war", _config.overlay.display)
-    end)
-
-    imgui.Dummy(imgui.ImVec2(0, 5))
-    imgui.DrawChild("Capture##points", function(width)
+        imgui.Separator()
         imgui.Text("Automatically capture points as soon as they become available - /acapp")
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##points_auto_capture", _config.auto_capture)
@@ -3280,6 +3379,219 @@ function Points:render_ui_settings()
 end
 
 return Points
+
+end
+
+package.preload['src.components.Regroup'] = function()
+local imgui=require('upmimgui')
+local R=require('src.core.Rules')
+local Player=require('src.utils.Player')
+local Find=require('src.components.Find')
+local shared=require('src.shared')
+local G={rows={},visible=false,open=false,requests={}}
+local RADIUS=math.sqrt((2314.0879-2260.5500)^2+(-1143.3927+1235.4124)^2)
+G.radius=RADIUS
+local function name_key(name) return R.trim(R.strip(name)):lower():gsub('_',' ') end
+local function same_player(row)
+    return row.id and sampIsPlayerConnected(row.id) and name_key(sampGetPlayerNickname(row.id))==name_key(row.name)
+end
+local function collecting_here(snapshot)
+    if not doesCharExist(PLAYER_PED) or not sampIsLocalPlayerSpawned() or getActiveInterior()~=snapshot.interior then return false end
+    local x,y=getCharCoordinates(PLAYER_PED)
+    return (x-snapshot.x)^2+(y-snapshot.y)^2<=25
+end
+
+function G:run()
+    if self.collect then return end
+    self.rows={};self.error=nil;self.pending=nil;self.mass=nil
+    self.open=true;self.visible=true
+    if not doesCharExist(PLAYER_PED) or not sampIsLocalPlayerSpawned() or sampGetGamestate()~=3 then
+        self.error='Wait until you have spawned, then run /rgcheck again.';return
+    end
+    local x,y=getCharCoordinates(PLAYER_PED)
+    local snapshot={x=x,y=y,interior=getActiveInterior(),nearby={},members={},started=os.clock()}
+    for id=0,sampGetMaxPlayerId(false) do
+        if sampIsPlayerConnected(id) then
+            local streamed,ped=sampGetCharHandleBySampPlayerId(id)
+            if streamed and doesCharExist(ped) then
+                local px,py=getCharCoordinates(ped)
+                if (px-x)^2+(py-y)^2<=RADIUS^2 then snapshot.nearby[name_key(sampGetPlayerNickname(id))]=true end
+            end
+        end
+    end
+    local me,id=sampGetPlayerIdByCharHandle(PLAYER_PED)
+    if me then snapshot.nearby[name_key(sampGetPlayerNickname(id))]=true end
+    self.collect=snapshot
+    samp_send_hidden_command('members')
+end
+
+local function finish_members()
+    local snapshot=G.collect
+    G.collect=nil
+    if not collecting_here(snapshot) then G.error='You moved while checking. Run /rgcheck again.';return end
+    if not snapshot.header or not snapshot.last then G.error='Could not read /members. Run /rgcheck again.';return end
+    for key,row in pairs(snapshot.members) do
+        if not snapshot.nearby[key] and not row.jailed then
+            row.id=Player:get_player_id_by_name(row.name:gsub(' ','_'))
+            if row.id then G.rows[#G.rows+1]=row end
+        end
+    end
+    table.sort(G.rows,function(a,b)return name_key(a.name)<name_key(b.name)end)
+end
+
+function G:find(row)
+    if Find:cooldown_remaining()>0 then return end
+    -- A member can reconnect under a different ID while this list is open.
+    local id=Player:get_player_id_by_name(row.name:gsub(' ','_'))
+    if not id then row.location='Offline';row.result='failed';return end
+    row.id=id
+    if not Find:find_once(id) then return end
+    row.location='Finding...';row.result='pending'
+    local request={row=row,waiting=true}
+    self.requests[name_key(row.name)]=request
+    self.pending=request
+end
+
+local function complete(request,location,result)
+    request.row.location=location;request.row.result=result
+    request.waiting=false;request.quiet_until=os.clock()+60
+    if G.pending==request then G.pending=nil end
+end
+
+local function find_result(text)
+    local own=text:match('^SMS: I need the where%-abouts of (.-), Sender: ')
+    if own and G.requests[name_key(own)] then return false end
+    local name,where=text:match('^(.-) has been last seen at (.-)%.$')
+    if not name then name,where=text:match('^SMS: Sources last seen (.-) go inside (.-), Sender: Unknown%.$') end
+    local missing=text:match("^SMS: I can't find any liable sources for (.-), they're inside somewhere, Sender: Unknown%.$")
+    local request=(name or missing) and G.requests[name_key(name or missing)]
+    if request and request.waiting then
+        complete(request,where or "Can't find",where and 'found' or 'failed')
+        return false
+    end
+    local pending=G.pending
+    if not pending then return end
+    if text=="You can't find that person as they're hidden in one of their turfs." then
+        complete(pending,"Can't find",'failed')
+        return false
+    elseif text=='You have already searched for someone - wait a little.' then
+        complete(pending,'Cooldown - try again','pending')
+        return false
+    elseif text=='You are not a detective.' then
+        complete(pending,'Detective job required','failed')
+        return false
+    end
+end
+
+function G:mention()
+    if self.mass or self.collect or #self.rows==0 then return end
+    local names,batches={},{}
+    for _,row in ipairs(self.rows) do
+        if same_player(row) then names[#names+1]=row.name end
+    end
+    table.sort(names,function(a,b)return #a==#b and a<b or #a>#b end)
+    for _,name in ipairs(names)do
+        local placed=false
+        for i,line in ipairs(batches)do
+            if #line+2+#name<=77 then batches[i]=line..', '..name;placed=true;break end
+        end
+        if not placed then batches[#batches+1]=name end
+    end
+    if #batches==0 then return end
+    local posts={}
+    for _,line in ipairs(batches)do posts[#posts+1]='/f '..line end
+    posts[#posts+1]='/f YOU ARE NOT AT THE REGROUP, GET HERE ASAP'
+    self.mass={posts=posts,index=1,next=0}
+end
+
+function G:register()
+    sampRegisterChatCommand('rgcheck',function()self:run()end)
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)return {text}end,function(text)
+        local snapshot=self.collect
+        local plain=R.trim(R.strip(text))
+        if snapshot and os.clock()-snapshot.started<=6 then
+            if plain=='Members Online:' then snapshot.header=true;return false end
+            if snapshot.header then
+                local color,name=text:match('^%* .- {(%x%x%x%x%x%x)}(.-){%x%x%x%x%x%x}%s+%(%d+%)')
+                if name then
+                    color=color:upper();name=R.trim(R.strip(name))
+                    snapshot.members[name_key(name)]={name=name,jailed=color=='FF8000' or color=='6F570E'}
+                    snapshot.last=os.clock();return false
+                end
+            end
+        end
+        return find_result(plain)
+    end)
+    shared.event_handler:register('SEND_COMMAND',function(command)
+        return R.trim(command):lower()=='/members' and is_command_self_sent('members')
+    end,function()self.collect=nil;self.error='Manual /members opened. Run /rgcheck again to refresh.'end)
+    shared.event_handler:register('PED_TICK',function()return true end,function()
+        local now=os.clock()
+        if self.collect and ((self.collect.last and now-self.collect.last>=0.7) or now-self.collect.started>=6) then finish_members() end
+        for key,request in pairs(self.requests) do
+            if request.waiting and not same_player(request.row) then
+                complete(request,'Offline','failed')
+            elseif not request.waiting and now>=request.quiet_until then self.requests[key]=nil end
+        end
+        local mass=self.mass
+        if mass and now>=mass.next then
+            sampSendChat(mass.posts[mass.index]);mass.index=mass.index+1;mass.next=now+1
+            if mass.index>#mass.posts then self.mass=nil end
+        end
+    end)
+    imgui.OnFrame(function()return self.visible end,function()self:render()end)
+end
+
+function G:render()
+    if self.open then imgui.OpenPopup('Regroup checker');self.open=false end
+    local display=imgui.GetIO().DisplaySize
+    imgui.SetNextWindowSize(imgui.ImVec2(math.min(550,display.x-32),math.min(650,display.y-48)),imgui.Cond.Always)
+    if not imgui.BeginPopupModal('Regroup checker',nil,imgui.WindowFlags.NoResize+imgui.WindowFlags.NoScrollbar)then return end
+    if self.collect then imgui.Text('Checking online members and your current area...') end
+    if self.error then imgui.TextWrapped(self.error) end
+    imgui.TextWrapped('Uses players currently streamed around you. Check uncertain names before using Mass mention.')
+    local remaining=Find:cooldown_remaining()
+    if remaining>0 then imgui.Text(('Find cooldown: %d seconds'):format(remaining)) end
+    local height=math.max(80,imgui.GetContentRegionAvail().y-62)
+    imgui.BeginChild('regroup_members',imgui.ImVec2(0,height),false)
+    if not self.collect and not self.error and #self.rows==0 then imgui.Text('All online members checked are nearby.') end
+    for i,row in ipairs(self.rows)do
+        imgui.PushID(i)
+        local button_x=imgui.GetCursorPosX()+imgui.GetContentRegionAvail().x-70
+        imgui.BeginGroup()
+        imgui.AlignTextToFramePadding()
+        imgui.Text(('%s (%d)'):format(row.name,row.id))
+        if row.location then
+            local end_x=imgui.GetItemRectMax().x-imgui.GetWindowPos().x
+            if end_x+imgui.GetStyle().ItemSpacing.x+imgui.CalcTextSize(row.location).x<button_x-8 then imgui.SameLine() end
+            local color=row.result=='found' and imgui.ImVec4(0,1,0,1)
+                or row.result=='pending' and imgui.ImVec4(1,0.5,0,1) or imgui.ImVec4(1,0,0,1)
+            imgui.PushTextWrapPos(button_x-8)
+            imgui.TextColored(color,row.location)
+            imgui.PopTextWrapPos()
+        end
+        imgui.EndGroup()
+        imgui.SameLine(button_x)
+        if imgui.AnimButton('Find',imgui.ImVec2(70,0))then self:find(row)end
+        if imgui.IsItemHovered() and remaining>0 then imgui.SetTooltip(('Cooldown: %d seconds'):format(remaining))end
+        imgui.Separator();imgui.PopID()
+    end
+    imgui.EndChild();imgui.Separator()
+    if imgui.AnimButton('Mass mention',imgui.ImVec2(150,38)) and #self.rows>0 and not self.collect and not self.mass then imgui.OpenPopup('Confirm mass mention')end
+    if imgui.IsItemHovered()then
+        imgui.BeginTooltip();imgui.TextColored(imgui.ImVec4(1,0,0,1),'WARNING, this WILL spam chat with their names');imgui.EndTooltip()
+    end
+    imgui.SameLine()
+    if imgui.AnimButton('Close',imgui.ImVec2(150,38))then self.visible=false;imgui.CloseCurrentPopup()end
+    if imgui.BeginPopupModal('Confirm mass mention',nil,imgui.WindowFlags.AlwaysAutoResize)then
+        imgui.TextColored(imgui.ImVec4(1,0,0,1),'WARNING, this function spams every persons name, it may mute you')
+        if imgui.AnimButton('Yes',imgui.ImVec2(100,0))then self:mention();imgui.CloseCurrentPopup()end
+        imgui.SameLine();if imgui.AnimButton('No',imgui.ImVec2(100,0))then imgui.CloseCurrentPopup()end
+        imgui.EndPopup()
+    end
+    imgui.EndPopup()
+end
+return G
 
 end
 
@@ -3726,10 +4038,7 @@ function Turfs:render_ui_settings()
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##turfs_overlay_active_war", _config.overlay.display_war_information)
 
-    end)
-
-    imgui.Dummy(imgui.ImVec2(0, 5))
-    imgui.DrawChild("Capture##turfs", function(width)
+        imgui.Separator()
         imgui.Text("Automatically capture turfs as soon as they become available - /acapt")
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##turfs_auto_capture", _config.auto_capture)
@@ -5243,14 +5552,14 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.7',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.8',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
 local staged,completed,http_request
 local startup_checked,manual_queued,manual_skins=false,false,false
 local next_skins_at=0
-local initial={132,137,209,212,230,236,107,195,270,269,271,106,293,0,68,200,62,221,229,214,127,124,24,164,202,66,234,235,261,272,43,91,2,291,93,101,233,126,211}
+local initial={68,94,62,221,214,229,234,235,261,272,43,91,132,137,209,212,230,236,24,25,124,69,164,202,107,195,270,269,271,106}
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end
@@ -5385,13 +5694,81 @@ return U
 
 end
 
+package.preload['src.core.VestRules'] = function()
+local R=require('src.core.Rules')
+local shared=require('src.shared')
+local V={}
+local registered,hospital,accept_after=nil,false,0
+local small_markets={
+    {-2967.8250,4413.9414,2525.0916},
+    {-2967.7144,4413.8823,2525.0916},
+    {-2967.6121,4413.9956,2525.0916},
+    {-2967.7554,4414.0405,2525.0916},
+}
+
+function V.in_market(x,y,z)
+    if z>=3091.9492 and z<=3118.9231 and x>=-838.8387 and x<=-788.4310
+        and y>=1084.3008 and y<=1159.1694 then return true end
+    for _,p in ipairs(small_markets) do
+        if math.abs(z-p[3])<=12 and (x-p[1])^2+(y-p[2])^2<=36^2 then return true end
+    end
+    return false
+end
+
+local function available()
+    return not hospital and doesCharExist(PLAYER_PED) and sampIsLocalPlayerSpawned()
+        and not (isCharDead and isCharDead(PLAYER_PED))
+        and not isCharPlayingAnim(PLAYER_PED,'KILL_Knife_Ped_Die')
+end
+
+function V.can_offer(aimed)
+    if not available() then return false end
+    if aimed then return true end
+    local x,y,z=getCharCoordinates(PLAYER_PED)
+    return not V.in_market(x,y,z)
+end
+
+function V.can_accept()
+    return os.clock()>=accept_after and V.can_offer(false)
+end
+
+function V.register()
+    if registered==shared.event_handler then return end
+    registered=shared.event_handler
+    hospital=false;accept_after=0
+    local function admitted()
+        hospital=true;accept_after=0
+        shared.event_handler:process('HOSPITAL_ADMITTED')
+    end
+    shared.event_handler:register('LOCAL_DEATH',function()return true end,function()
+        -- Clear old offers immediately. Hospital admission is confirmed by HZG's chat.
+        shared.event_handler:process('HOSPITAL_ADMITTED')
+    end)
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)return {R.trim(R.strip(text))}end,function(text)
+        if text=='You fell unconscious, you were immediately sent to the hospital.'
+            or text=='You gave up hope and fell unconscious, you were immediately sent to the hospital.'
+            or text=='Before you are discharged, hospital staff will confiscate your weapons.' then
+            admitted()
+        elseif text:match('^Your hospital bill comes to %$[%d,]+%. Have a nice day!$') then
+            hospital=false
+            local point=require('src.components.Points'):get_active_point()
+            local turf=require('src.components.Turfs'):get_active_turf()
+            local fighting=not point.refresh_timer:is_paused() or not turf.refresh_timer:is_paused()
+            accept_after=fighting and os.clock()+15 or 0
+        end
+    end)
+end
+return V
+
+end
+
 package.preload['src.main'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\main.lua
 
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.7")
+script_version("1.0.8")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5663,6 +6040,14 @@ function sampev.onServerMessage(color, text)
     return shared.event_handler:process("SERVER_MESSAGE", color, text)
 end
 
+function sampev.onSendDeathNotification(reason,killer)
+    return shared.event_handler:process('LOCAL_DEATH',reason,killer)
+end
+
+function sampev.onSendTakeDamage(player,damage,weapon,bodypart)
+    return shared.event_handler:process('LOCAL_DAMAGE',player,damage,weapon,bodypart)
+end
+
 function sampev.onEditAttachedObject(index)
     return shared.event_handler:process("EDIT_ATTACHED_OBJECT", index)
 end
@@ -5688,6 +6073,14 @@ end
 
 function sampev.onToggleSelectTextDraw(state, hovercolor)
     return shared.event_handler:process("TOGGLE_SELECT_TEXTDRAW", state, hovercolor)
+end
+
+function sampev.onTextDrawHide(id)
+    return shared.event_handler:process('HIDE_TEXTDRAW',id)
+end
+
+function sampev.onTextDrawSetString(id,text)
+    return shared.event_handler:process('TEXTDRAW_SET_STRING',id,text)
 end
 
 function sampev.onCreate3DText(id, color, position, distance, testLOS, attachedPlayerId, attachedVehicleId, text)
@@ -5743,7 +6136,9 @@ function sampev.onSendCommand(cmd)
         _commands_state.is_cmd_self_sent[cmd_name] = true
     end
 
-    if _is_loading_interior then
+    -- Backup calls do not depend on streamed objects and must not wait for them.
+    local immediate_backup=cmd_name=='/pr' or cmd_name=='/fbackup' or cmd_name=='/nobackup'
+    if _is_loading_interior and not immediate_backup then
         lua_thread.create(function()
 
             while _is_loading_interior do
@@ -6296,7 +6691,7 @@ function E:render()
         for i,g in ipairs(Import.rows)do
             imgui.PushStyleColor(imgui.Col.Text,color(g.hex))
             if imgui.Selectable(g.name..'##import'..i,false,imgui.SelectableFlags.NoAutoClosePopups)then
-                self.name=g.name;self.hex=g.hex;self.error=nil
+                self.name=g.name;self.hex=g.hex;self.error=nil;Import.visible=false
             end
             imgui.PopStyleColor()
         end
@@ -6355,6 +6750,20 @@ package.preload['src.ui.CaptureLayout'] = function()
 -- Shared screen-space anchor; spacing remains four pixels at any resolution.
 local L={}
 function L.bind(kind,overlay) L[kind]=overlay end
+local function horizontal(cfg)return cfg.horizontal and cfg.horizontal[0]end
+local function scale(cfg)return cfg.scale and cfg.scale[0] or 1 end
+local function sync(cfg,anchor)
+    if cfg.scale and anchor.scale then cfg.scale[0]=anchor.scale[0] end
+    if cfg.horizontal and anchor.horizontal then cfg.horizontal[0]=anchor.horizontal[0] end
+end
+local function extent(overlay,axis)
+    if not overlay or not overlay.condition() then return 0 end
+    local cfg=overlay.config
+    local value
+    if axis=='x' then value=overlay.last_width else value=overlay.last_height end
+    if value then return value*scale(cfg)/(overlay.last_scale or scale(cfg))+4 end
+    return ((axis=='x' and cfg.font_size[0]*18 or cfg.font_size[0]+2)+cfg.padding[0]*2)*scale(cfg)+4
+end
 function L.position_point()
     if not L.turf or not L.point then return end
     local imgui=require('upmimgui')
@@ -6362,38 +6771,47 @@ function L.position_point()
     if height<=0 then return end
     local anchor=L.turf.config
     local cfg=L.point.config
+    sync(cfg,anchor)
+    if horizontal(anchor) then
+        cfg.pos.x[0]=anchor.pos.x[0];cfg.pos.y[0]=anchor.pos.y[0]
+        return anchor.pos,0,extent(L.turf,'x')*(anchor.pos.x[0]>0.5 and -1 or 1)
+    end
     local offset=0
     if L.turf.condition() then
-        offset=(L.turf.last_height or (anchor.font_size[0]+anchor.padding[0]*2+2))+4
+        offset=extent(L.turf,'y')
     end
     cfg.pos.x[0]=anchor.pos.x[0]
     cfg.pos.y[0]=anchor.pos.y[0]+offset/height
 end
 local function row_spacing(overlay)
-    if not overlay or not overlay.condition() then return 0 end
-    local cfg=overlay.config
-    return (overlay.last_height or (cfg.font_size[0]+cfg.padding[0]*2+2))+4
+    return extent(overlay,'y')
 end
 
 function L.position_vest()
-    if L.vest_to then return L.vest_to.config.pos,row_spacing(L.vest_to) end
+    if not L.vest_to then return end
+    local anchor=L.vest_to.config
+    if L.vest_by then sync(L.vest_by.config,anchor) end
+    if horizontal(anchor) then return anchor.pos,0,extent(L.vest_to,'x')*(anchor.pos.x[0]>0.5 and -1 or 1) end
+    return anchor.pos,row_spacing(L.vest_to)
 end
 
 function L.position_vest_cooldown()
     local cooldown=L.vest_cooldown
     local cfg=cooldown.config
     local anchor=cfg.pos
+    if horizontal(cfg) then
+        return anchor,0,(extent(L.vest_to,'x')+extent(L.vest_by,'x'))*(anchor.x[0]>0.5 and -1 or 1)
+    end
     local height=require('upmimgui').GetIO().DisplaySize.y
     local gap=row_spacing(cooldown)
-    local padding_delta=cfg.padding[0]-(cfg.padding_anchor or cfg.padding[0])
+    local padding_delta=(cfg.padding[0]-(cfg.padding_anchor or cfg.padding[0]))*scale(cfg)
     if anchor.y[0]*height-padding_delta>=gap then return anchor,-gap end
 
     -- At the top edge, use the space beside the first offer.
     local offer=L.vest_to.condition() and L.vest_to or L.vest_by
     if not offer or not offer.condition() then return anchor,0 end
-    local width=offer.last_width or (cfg.font_size[0]*18+cfg.padding[0]*2)
     local direction=anchor.x[0]>0.5 and -1 or 1
-    return anchor,0,(width+4)*direction
+    return anchor,0,extent(offer,'x')*direction
 end
 return L
 
@@ -6402,8 +6820,15 @@ end
 package.preload['src.ui.Dialogs'] = function()
 -- Client-only SA-MP dialogs. Never submits a locally-owned dialog to HZG.
 local D={queue={},active=nil,id=32760}
-function D.show(title,text,style,button,callback,required,eligible)
-    D.queue[#D.queue+1]={title=title,text=text,style=style,button=button,callback=callback,required=required,eligible=eligible}
+function D.show(title,text,style,button,callback,required,eligible,tag,allow_escape)
+    D.queue[#D.queue+1]={title=title,text=text,style=style,button=button,callback=callback,required=required,eligible=eligible,tag=tag,allow_escape=allow_escape}
+end
+function D.cancel(tag)
+    for i=#D.queue,1,-1 do if D.queue[i].tag==tag then table.remove(D.queue,i) end end
+    if D.active and D.active.tag==tag then
+        D.active=nil
+        if sampIsDialogActive() and sampGetCurrentDialogId()==D.id then sampCloseCurrentDialogWithButton(0) end
+    end
 end
 function D.start(recovery)
     if recovery then
@@ -6429,7 +6854,7 @@ function D.start(recovery)
                 local result,button,list,input=sampHasDialogRespond(D.id)
                 if result then
                     local item=D.active;D.active=nil
-                    if button~=1 and item.required then table.insert(D.queue,1,item)
+                    if button~=1 and item.required and not item.allow_escape then table.insert(D.queue,1,item)
                     elseif button==1 and item.callback then item.callback(list,input) end
                 elseif sampIsDialogActive() and sampGetCurrentDialogId()~=D.id then
                     table.insert(D.queue,1,D.active);D.active=nil
@@ -6447,6 +6872,41 @@ package.preload['src.ui.Helpers'] = function()
 local imgui=require('upmimgui')
 local shared=require('src.shared')
 local H={color=imgui.ImVec4(30/255,51/255,72/255,1)}
+H.position_label='Change overlay position - Left mouse click to save | ESC to cancel | Scroll wheel up and down to change size'
+function H.position_tip()
+    if imgui.IsItemHovered() then
+        imgui.SetTooltip('%s','Mouse button 1: save position and size\nESC: cancel changes\nScroll wheel up/down: change size in 2% steps')
+    end
+end
+function H.position_text(width,button_width)
+    imgui.BeginGroup()
+    imgui.PushTextWrapPos(math.max(40,width-button_width-12))
+    imgui.TextWrapped(H.position_label)
+    imgui.PopTextWrapPos()
+    imgui.EndGroup()
+    imgui.SameLine(width-button_width)
+end
+function H.realign(configs,prefix)
+    local saved={}
+    for i,cfg in ipairs(configs) do
+        cfg.scale=cfg.scale or imgui.new.float(1)
+        saved[i]={x=cfg.pos.x[0],y=cfg.pos.y[0],scale=cfg.scale[0]}
+    end
+    require('src.utils.ElementRealigner'):realign_element(function(x,y)
+        for _,cfg in ipairs(configs) do cfg.pos.x[0]=x;cfg.pos.y[0]=y end
+    end,{
+        preview=prefix,
+        on_resize=function(steps)
+            local scale=math.floor(math.max(0.5,math.min(2,configs[1].scale[0]+steps*0.02))*100+0.5)/100
+            for _,cfg in ipairs(configs)do cfg.scale[0]=scale end
+        end,
+        on_cancel=function()
+            for i,cfg in ipairs(configs)do
+                cfg.pos.x[0]=saved[i].x;cfg.pos.y[0]=saved[i].y;cfg.scale[0]=saved[i].scale
+            end
+        end,
+    })
+end
 function H.toggle(label,id,value,width,tip)
     imgui.Text(label)
     if tip and imgui.IsItemHovered() then imgui.SetTooltip(tip) end
@@ -6460,12 +6920,18 @@ function H.bind(label,id,cfg,width)
 end
 function H.position(configs,prefix)
     imgui.DrawChild('Position##'..prefix,function(width)
-        imgui.Text('Overlay position on screen');imgui.SameLine(width-120)
-        if imgui.AnimButton('Position##'..prefix,imgui.ImVec2(120,0)) then
-            require('src.utils.ElementRealigner'):realign_element(function(x,y)
-                for i,c in ipairs(configs) do c.pos.x[0]=x;c.pos.y[0]=math.min(0.97,y+(i-1)*0.035) end
-            end,{preview=prefix})
+        H.position_text(width,200+imgui.GetStyle().ItemSpacing.x)
+        if imgui.AnimButton('Style##'..prefix,imgui.ImVec2(80,0)) then
+            local horizontal=not configs[1].horizontal[0]
+            for _,cfg in ipairs(configs)do cfg.horizontal[0]=horizontal end
+            save_config()
         end
+        if imgui.IsItemHovered()then imgui.SetTooltip('Changes the style of the overlay. Stacked and Vertical')end
+        imgui.SameLine()
+        if imgui.AnimButton('Position##'..prefix,imgui.ImVec2(120,0)) then
+            H.realign(configs,prefix)
+        end
+        H.position_tip()
     end)
 end
 H.open=require('src.utils.Browser')
@@ -6824,6 +7290,8 @@ function Overlay.setup_overlay_defaults(display, pos_x, pos_y, font_size, paddin
             y = imgui.new.float(pos_y or 0.5)
         },
         font_size = imgui.new.int(font_size or 20),
+        scale = imgui.new.float(1),
+        horizontal = imgui.new.bool(false),
         padding = imgui.new.int(padding or 4),
         border_thickness = imgui.new.int(border_thickness or 1),
         rounding = imgui.new.int(rounding or 8),
@@ -6906,14 +7374,16 @@ end
 
 function Overlay:TextOutline(text, thickness)
     local pos = imgui.GetCursorPos()
+    local scale=self.config.scale and self.config.scale[0] or 1
     for i = 1, thickness do
-        imgui.SetCursorPos(imgui.ImVec2(pos.x + i, pos.y))
+        local offset=i*scale
+        imgui.SetCursorPos(imgui.ImVec2(pos.x + offset, pos.y))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
-        imgui.SetCursorPos(imgui.ImVec2(pos.x - i, pos.y))
+        imgui.SetCursorPos(imgui.ImVec2(pos.x - offset, pos.y))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
-        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y + i))
+        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y + offset))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
-        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y - i))
+        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y - offset))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
     end
     imgui.SetCursorPos(pos)
@@ -6952,7 +7422,7 @@ function Overlay:TextRGB(text)
                 imgui.SameLine(nil, 0)
             end
 
-            imgui.PushFont(nil, cfg.font_size[0])
+            imgui.PushFont(nil, cfg.font_size[0]*(cfg.scale and cfg.scale[0] or 1))
             self:TextOutline(segment, 2)
             imgui.TextColored(current_color, segment)
             imgui.PopFont()
@@ -6975,7 +7445,7 @@ function Overlay:TextRGB(text)
             imgui.SameLine(nil, 0)
         end
 
-        imgui.PushFont(nil, cfg.font_size[0])
+        imgui.PushFont(nil, cfg.font_size[0]*(cfg.scale and cfg.scale[0] or 1))
         self:TextOutline(remaining, 1)
         imgui.TextColored(current_color, remaining)
         imgui.PopFont()
@@ -6985,6 +7455,7 @@ end
 function Overlay:render()
     local cfg = self.config
     if not cfg then return end
+    local scale=cfg.scale and cfg.scale[0] or 1
 
     -- Layout may read ImGui state only here, on the selected render context.
     local anchor, offset_y, offset_x
@@ -7000,7 +7471,7 @@ function Overlay:render()
     end
 
     cfg.padding_anchor=cfg.padding_anchor or cfg.padding[0]
-    local delta=cfg.padding[0]-cfg.padding_anchor
+    local delta=(cfg.padding[0]-cfg.padding_anchor)*scale
     pos_x=pos_x+(offset_x or 0)+(pivot.x==1 and delta or -delta)
     pos_y=pos_y-delta
     imgui.SetNextWindowPos(imgui.ImVec2(pos_x, pos_y), imgui.Cond.Always, pivot)
@@ -7016,14 +7487,14 @@ function Overlay:render()
     if cfg.border_render[0] and cfg.border_thickness[0] > 0 then
         imgui.PushStyleColor(imgui.Col.Border,
             imgui.ImVec4(cfg.border_color[0], cfg.border_color[1], cfg.border_color[2], cfg.border_color[3]))
-        imgui.PushStyleVar(imgui.StyleVar.WindowBorderSize, cfg.border_thickness[0])
+        imgui.PushStyleVar(imgui.StyleVar.WindowBorderSize, cfg.border_thickness[0]*scale)
     else
         imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(0, 0, 0, 0))
         imgui.PushStyleVar(imgui.StyleVar.WindowBorderSize, 0)
     end
 
-    imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(cfg.padding[0], cfg.padding[0]))
-    imgui.PushStyleVar(imgui.StyleVar.WindowRounding, cfg.rounding[0])
+    imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(cfg.padding[0]*scale, cfg.padding[0]*scale))
+    imgui.PushStyleVar(imgui.StyleVar.WindowRounding, cfg.rounding[0]*scale)
 
     local window_name = "Overlay##" .. tostring(self)
     imgui.Begin(window_name, nil, OVERLAY_FLAGS)
@@ -7034,6 +7505,7 @@ function Overlay:render()
 
     self.last_width = imgui.GetWindowWidth()
     self.last_height = imgui.GetWindowHeight()
+    self.last_scale = scale
     imgui.End()
 
     imgui.PopStyleVar()
@@ -7054,12 +7526,12 @@ local sections={
     {'home','Credits','Sputnik credits','Kev and Futurestunt','Garry forum and Discord'},
     {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision'},
     {'auto_vest','Auto Vest','Automatically vest nearby players - /avest','Aim and vest',
-        'Command mode','Alliance skins to be vested','Add gang and Auto import /gangs',
+        'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
-    {'auto_vest','Position##vesting','Vest overlay position'},
+    {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical'},
     {'backup','Backup','Show active backup requests','Faction backup keybind','All custom locations','Mention wanted level'},
     {'backup','Portable Radio','Show frequency in chat messages','Checks /fmotd for alliance frequency and changes freq'},
     {'backup','Position & Appearance##backup','Backup overlay position','Draw a background','Draw a border'},
@@ -7073,22 +7545,23 @@ local sections={
     {'miscellaneous','Font Selector','Change font for on-screen elements'},
     {'miscellaneous','Automatization','Automatically eject all players from vehicle when it catches fire',
         'Automatically accept $1 repair offers from players','Offer $1 repair to nearest driver or passenger',
+        'Automatically accept lawyer offered at $200',
         'Automatically retry picking a vehicle lock after a failed attempt','Spam LMB while holding a Sprunk can to quickly recover health'},
     {'miscellaneous','Beacon Resolver','Resolve player IDs when written as "B20" to their actual name instead'},
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
-        'Cooldown on /afree and /al','Lawyer cooldown overlay position'},
-    {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'/signcheck -> /si'},
+        'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size'},
+    {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Sign check - /si','Change insurance location - /ins'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
     {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border'},
     {'ped_counter','Style Properties##ped_counter','Font size','Padding','Border Thickness','Rounding'},
-    {'capture','Turfs','Show upcoming turf war info','Show active turf war info'},
-    {'capture','Capture##turfs','Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
-    {'capture','Points','Show upcoming point war info','Show active point war info'},
-    {'capture','Capture##points','Automatically capture points - /acapp'},
-    {'capture','Position##capture','Turf and point overlay position'},
+    {'capture','Turfs','Show upcoming turf war info','Show active turf war info',
+        'Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
+    {'capture','Points','Show upcoming point war info','Show active point war info','Automatically capture points - /acapp'},
+    {'capture','Regroup checker','Checks the surrounding area for our own members','Quick usage - /rgcheck','RGCHECK'},
+    {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
     {'phone','SMS Players','Send SMS - /pm'}
 }
@@ -8361,6 +8834,9 @@ local _realigner_state = {
     frame = nil,
     preview = nil,
     started = 0,
+    options = nil,
+    wheel = 0,
+    cancel = false,
 }
 
 local function _get_normalized_cursor()
@@ -8370,13 +8846,17 @@ local function _get_normalized_cursor()
     return math.max(0,math.min(0.98,cursor.x / display_size.x)), math.max(0,math.min(0.98,cursor.y / display_size.y))
 end
 
-local function _complete_realignment()
-    MainWindow:show()
-
+local function _complete_realignment(commit)
+    local options=_realigner_state.options
     _realigner_state.is_realigning[0] = false
     _realigner_state.update_callback = nil
     _realigner_state.preview = nil
-    save_config()
+    _realigner_state.options=nil
+    _realigner_state.wheel=0
+    _realigner_state.cancel=false
+    if not commit and options and options.on_cancel then options.on_cancel() end
+    MainWindow:show()
+    if commit then save_config() end
 end
 
 local function _initialize_frame()
@@ -8385,6 +8865,12 @@ local function _initialize_frame()
     _realigner_state.frame = imgui.OnFrame(
         function() return _realigner_state.is_realigning[0] end,
         function()
+            if _realigner_state.cancel then _complete_realignment(false);return end
+            local options=_realigner_state.options
+            local wheel=_realigner_state.wheel
+            local steps=wheel>=0 and math.floor(wheel) or math.ceil(wheel)
+            _realigner_state.wheel=wheel-steps
+            if steps~=0 and options and options.on_resize then options.on_resize(steps) end
             local normalized_x, normalized_y = _get_normalized_cursor()
 
             if normalized_x and _realigner_state.update_callback then
@@ -8392,7 +8878,7 @@ local function _initialize_frame()
             end
 
             if os.clock()-_realigner_state.started>0.15 and imgui.IsMouseClicked(0, false) then
-                _complete_realignment()
+                _complete_realignment(true)
             end
         end
     )
@@ -8401,15 +8887,37 @@ end
 
 _initialize_frame()
 
+-- Match alist's wheel accumulation and consume both Escape transitions.
+local escape_down=false
+addEventHandler('onWindowMessage',function(message,key)
+    if message==0x20A and _realigner_state.is_realigning[0]
+        and _realigner_state.options and _realigner_state.options.on_resize then
+        local delta=math.floor(key/65536)%65536
+        if delta>=32768 then delta=delta-65536 end
+        _realigner_state.wheel=_realigner_state.wheel+delta/120
+        consumeWindowMessage(true,true)
+    elseif key==0x1B then
+        if (message==0x100 or message==0x104) and (_realigner_state.is_realigning[0] or escape_down) then
+            _realigner_state.cancel=true;escape_down=true
+            consumeWindowMessage(true,true)
+        elseif (message==0x101 or message==0x105) and escape_down then
+            escape_down=false;consumeWindowMessage(true,true)
+        end
+    end
+end)
+
 local ElementRealigner = {}
 
 function ElementRealigner:realign_element(on_update, options)
     if _realigner_state.is_realigning[0] then
-        _complete_realignment()
+        _complete_realignment(false)
     end
 
     _realigner_state.started = os.clock()
     _realigner_state.preview = options and options.preview
+    _realigner_state.options=options
+    _realigner_state.wheel=0
+    _realigner_state.cancel=false
     _realigner_state.update_callback = on_update
     _realigner_state.is_realigning[0] = true
     MainWindow:hide()
@@ -9288,7 +9796,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.7", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.8", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
