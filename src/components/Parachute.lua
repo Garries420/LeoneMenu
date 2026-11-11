@@ -8,9 +8,13 @@ P.__index = P
 local PARACHUTE = 46
 local PARACHUTE_SLOT = 11
 local EQUIP_PLAYER_WEAPON = 0x60B460
+local AIRCRAFT_EXIT_SECONDS = 2
+local SELECTION_RETRY_SECONDS = 0.25
 local FALL_ANIMATIONS = {
     'FALL_skyDive', 'FALL_SkyDive_Accel', 'FALL_skyDive_DIE',
-    'FALL_skyDive_L', 'FALL_skyDive_R', 'PARA_open', 'PARA_float',
+    'FALL_skyDive_L', 'FALL_skyDive_R', 'PARA_open', 'PARA_open_O',
+    'PARA_float', 'PARA_float_O', 'PARA_decel', 'PARA_decel_O',
+    'PARA_steerL', 'PARA_steerL_O', 'PARA_steerR', 'PARA_steerR_O',
 }
 
 local function input_allowed()
@@ -22,6 +26,13 @@ local function input_allowed()
 end
 
 local function falling()
+    -- Catch a bail-out or drop before GTA blends into the skydiving animation.
+    -- Height and downward movement keep an ordinary jump on the ground path.
+    if isCharInAir and getCharHeightAboveGround and getCharVelocity and isCharInAir(PLAYER_PED)
+        and getCharHeightAboveGround(PLAYER_PED) >= 2.1 then
+        local _, _, vertical_speed = getCharVelocity(PLAYER_PED)
+        if vertical_speed < 0 then return true end
+    end
     for _, anim in ipairs(FALL_ANIMATIONS) do
         if isCharPlayingAnim(PLAYER_PED, anim) then return true end
     end
@@ -63,7 +74,8 @@ function P.new(enabled, on_skip)
 end
 
 function P:input(direction)
-    self.intent = {direction = direction, ready = self.frame + 2, at = os.clock()}
+    self.last_direction = direction
+    self.cycle_ready = self.frame + 2
 end
 
 function P:window(message, wparam, lparam)
@@ -104,67 +116,84 @@ end
 function P:tick()
     self.frame = self.frame + 1
     if not self.enabled[0] or not doesCharExist(PLAYER_PED) or sampGetGamestate() ~= 3
-        or not sampIsLocalPlayerSpawned() or isCharInAnyCar(PLAYER_PED)
+        or not sampIsLocalPlayerSpawned()
         or (isCharDead and isCharDead(PLAYER_PED)) or (isCharInWater and isCharInWater(PLAYER_PED)) then
-        self.intent, self.selection, self.last_weapon = nil, nil, nil
+        self.cycle_ready, self.selection, self.last_weapon, self.last_direction = nil, nil, nil, nil
+        self.in_aircraft, self.aircraft_exit_until = nil, nil
         return
     end
+    if isCharInAnyCar(PLAYER_PED) then
+        self.in_aircraft = isCharInFlyingVehicle and isCharInFlyingVehicle(PLAYER_PED)
+        self.cycle_ready, self.selection, self.last_weapon, self.last_direction = nil, nil, nil, nil
+        self.aircraft_exit_until = nil
+        return
+    end
+    local now = os.clock()
+    if self.in_aircraft then self.aircraft_exit_until = now + AIRCRAFT_EXIT_SECONDS end
+    self.in_aircraft = nil
+    local aircraft_exit = self.aircraft_exit_until and now < self.aircraft_exit_until
+    if not aircraft_exit then self.aircraft_exit_until = nil end
+
     local direction = self:poll_controls()
     if not input_allowed() then
-        self.intent, self.selection, self.last_weapon = nil, nil, nil
+        self.cycle_ready, self.selection, self.last_weapon = nil, nil, nil
         return
     end
+    -- A wheel notch can arrive through both paths. Keep the window event's
+    -- direction if polling sees the same input on this frame.
+    if direction and self.window_frame ~= self.frame - 1 then self:input(direction) end
+
     local current = getCurrentCharWeapon(PLAYER_PED)
     local previous = self.last_weapon
     self.last_weapon = current
     if current ~= PARACHUTE and getCharWeaponInSlot(PLAYER_PED, PARACHUTE_SLOT + 1) ~= PARACHUTE then
-        self.intent, self.selection = nil, nil
+        self.selection = nil
         return
     end
     if falling() then
-        self.intent, self.selection = nil, nil
+        self.cycle_ready, self.selection = nil, nil
+        if aircraft_exit then self.aircraft_exit_until = now + AIRCRAFT_EXIT_SECONDS end
         if current ~= PARACHUTE then equip(PARACHUTE) end
         return
     end
 
     local selection = self.selection
     if selection then
-        if current == selection.weapon and os.clock() < selection.expires then
+        if current == selection.weapon then
+            self.aircraft_exit_until = nil
             self.on_skip()
-        elseif current == PARACHUTE and os.clock() < selection.expires then
+        elseif current == PARACHUTE and now < selection.retry_at then
             return
         end
         self.selection = nil
     end
+    if current ~= PARACHUTE then return end
 
-    -- A wheel notch can arrive through both paths. Preserve the window
-    -- event's timing and use polling if no window event arrived.
-    if direction and self.window_frame ~= self.frame - 1
-        and (not self.intent or self.intent.direction ~= direction) then
-        self:input(direction)
-    end
-    local intent = self.intent
-    if not intent then return end
-    if os.clock() - intent.at > 0.35 then self.intent = nil; return end
-    -- The real weapon transition confirms that GTA processed the cycle. Skip
-    -- immediately on that frame, as PEMENU does. If we were already holding
-    -- the parachute, give the original input time to move off it on its own.
+    -- A newly selected chute confirms the cycle happened. If it was already
+    -- held, give a fresh input one frame to cycle away on its own.
     local reached_chute = current == PARACHUTE and previous ~= nil and previous ~= PARACHUTE
-    if not reached_chute and self.frame < intent.ready then return end
-    if current ~= PARACHUTE then
-        -- The original control may take another frame to reach the chute.
-        if self.frame >= intent.ready + 2 then self.intent = nil end
-        return
+    if not aircraft_exit and not reached_chute and self.cycle_ready and self.frame < self.cycle_ready then return end
+    self.cycle_ready = nil
+
+    local weapon = 0
+    if not aircraft_exit then
+        if self.last_direction then
+            weapon = next_weapon(self.last_direction)
+        elseif previous ~= nil and previous ~= PARACHUTE then
+            -- PEMENU uses the previously active slot when there was no input.
+            local left, right = next_weapon(-1), next_weapon(1)
+            if previous == left then weapon = right
+            elseif previous == right then weapon = left end
+        end
     end
 
-    self.intent = nil
-    local weapon = next_weapon(intent.direction)
     equip(weapon)
     if getCurrentCharWeapon(PLAYER_PED) == weapon then
         self.last_weapon = weapon
+        self.aircraft_exit_until = nil
         self.on_skip()
     else
-        self.selection = {weapon = weapon, expires = os.clock() + 0.25}
+        self.selection = {weapon = weapon, retry_at = now + SELECTION_RETRY_SECONDS}
     end
 end
 

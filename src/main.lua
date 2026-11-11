@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.1")
+script_version("1.1.2")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -12,6 +12,7 @@ local ffi = require("ffi")
 local imgui = require("upmimgui")
 local sampev = require("samp.events")
 imgui.SetDpiScalingMode(3)
+require('src.ui.RendererRecovery')(imgui)
 
 require("src.ui.Widgets")
 local shared = require("src.shared")
