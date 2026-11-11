@@ -295,8 +295,8 @@ local fa = require("fAwesome7")
 local imgui = require("upmimgui")
 local keys = require("game.keys")
 
-local AsyncHttpRequest = require("src.utils.AsyncHttpRequest")
 local Updates = require("src.core.Updates")
+local skin_feed = require('src.components.VestSkinFeed').new()
 local H = require("src.ui.Helpers")
 local Rules = require("src.core.Rules")
 local Editor = require("src.ui.AllianceEditor")
@@ -328,6 +328,7 @@ local default_data = {
         },
     },
     vester_mode = imgui.new.int(VESTER_MODE.AUTOMATIC),
+    skin_url = '',
     offer_if_armor_below = imgui.new.int(48),
     groups = {},
     aim = {keys={}},
@@ -421,7 +422,7 @@ local function _find_closest_valid_player(attempt)
                 for _,v in ipairs(group.skins) do if v==skin then match=true end end
             end
         end
-        if not match then return false end
+        if not match and not skin_feed.skins[skin] then return false end
 
         local health=sampGetPlayerHealth(id)
         if health<=0 then return false end
@@ -632,6 +633,7 @@ end
 
 function AutoVest:register()
     carboneum.load(CONFIG_PATH, _config)
+    skin_feed:set_url(_config.skin_url)
     if _config.command_mode.intervals[COMMAND_MODE.DD][0]==10 then _config.command_mode.intervals[COMMAND_MODE.DD][0]=7 end
     VestRules.register()
 
@@ -648,6 +650,13 @@ function AutoVest:register()
         if connected then _auto_vest_state.aim_request={id=id,name=sampGetPlayerNickname(id)} end
     end)
     shared.event_handler:register('PED_TICK',function()return _auto_vest_state.aim_request~=nil end,_process_aim_request)
+    shared.event_handler:register('PED_TICK',function()return skin_feed.url~='' or skin_feed.request or _ui_state.save_url_at end,function()
+        skin_feed:tick()
+        if _ui_state.save_url_at and os.clock()>=_ui_state.save_url_at then
+            _ui_state.save_url_at=nil
+            if not self:save_config() then _ui_state.save_url_at=os.clock()+5 end
+        end
+    end)
     shared.event_handler:register('SERVER_MESSAGE',function(_,text)
         local offer=_auto_vest_state.pending
         if not offer then return false end
@@ -694,7 +703,9 @@ function AutoVest:render_ui_settings()
         imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
-        imgui.Text('Alliance skins to be vested');imgui.SameLine(width-290)
+        local url_width=60
+        local mode_right=width-url_width-imgui.GetStyle().ItemSpacing.x
+        imgui.Text('Alliance skins to be vested');imgui.SameLine(mode_right-290)
         if imgui.AnimButton(fa('GEAR')) then
             Editor:show(_config.groups,function(groups)
                 local previous=_config.groups
@@ -704,9 +715,21 @@ function AutoVest:render_ui_settings()
                 return false
             end)
         end
-        imgui.SameLine(width-250)
+        imgui.SameLine(mode_right-250)
         imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
         if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
+        imgui.SameLine(width-url_width)
+        if imgui.AnimButton('URL',imgui.ImVec2(url_width,0)) then _ui_state.skin_url_open=not _ui_state.skin_url_open end
+        if imgui.IsItemHovered() then imgui.SetTooltip('Add a URL to an HTML skin list. Auto Vest will also vest players with those skin IDs.') end
+        if _ui_state.skin_url_open then
+            local url,changed=H.input('##vest_skin_url',_config.skin_url,'HTML url here...',imgui.GetContentRegionAvail().x,2048)
+            if changed then
+                _config.skin_url=url
+                skin_feed:set_url(url)
+                _ui_state.save_url_at=os.clock()+0.5
+            end
+            if skin_feed.status then imgui.TextDisabled('%s',skin_feed.status) end
+        end
         imgui.Separator()
         imgui.Text('Vest interval (seconds)');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##vest_interval',_config.command_mode.intervals[_config.command_mode.current[0]])
@@ -971,6 +994,75 @@ return C
 
 end
 
+package.preload['src.components.ChatDedup'] = function()
+local R=require('src.core.Rules')
+local D={}
+local LAST_CHAT_ROW=99
+local CHAT_REDRAW=0x63DA
+-- PE entry points and CChat references for SA-MP 0.3.7 R1, R3-1 and R5-1.
+local chat_refs={[0x31DF13]=0x21A0E4,[0xCC4D0]=0x26E8C8,[0xCBC90]=0x26EB80}
+local enabled,last
+
+function D.configure(setting)
+    enabled=setting
+    last=nil
+end
+
+local function chat_address()
+    if not (sampGetBase and sampGetChatInfoPtr and readMemory and writeMemory) then return end
+    local base,chat=sampGetBase(),sampGetChatInfoPtr()
+    if not base or base==0 or not chat or chat==0 or readMemory(base,2,false)~=0x5A4D then return end
+    local header=readMemory(base+0x3C,4,false)
+    if not header or header<0x40 or header>0x1000 or readMemory(base+header,4,false)~=0x4550 then return end
+    local ref=chat_refs[readMemory(base+header+0x28,4,false)]
+    if ref and readMemory(base+ref,4,false)==chat then return chat end
+end
+
+local function replace_last(previous,updated)
+    if #updated>143 or not (sampGetChatString and sampSetChatString) then return false end
+    local chat=chat_address()
+    if not chat then return false end
+    local text,prefix,color,prefix_color=sampGetChatString(LAST_CHAT_ROW)
+    if text~=previous.rendered or type(prefix)~='string' then return false end
+    local name=R.trim(R.strip(prefix)):gsub(':$','')
+    if name~=previous.prefix then return false end
+    sampSetChatString(LAST_CHAT_ROW,updated,prefix,color,prefix_color)
+    writeMemory(chat+CHAT_REDRAW,4,1,false)
+    return true
+end
+
+local function combine(source,sender,raw,visible,prefix)
+    if not enabled or not enabled[0] then last=nil;return end
+    if last and last.source==source and last.sender==sender and last.prefix==prefix and last.raw==raw and last.visible==visible then
+        local count=last.count+1
+        local updated=('%s [x%d]'):format(visible,count)
+        local ok,replaced=pcall(replace_last,last,updated)
+        if ok and replaced then
+            last.count=count
+            last.rendered=updated
+            return false
+        end
+    end
+    last={source=source,sender=sender,raw=raw,visible=visible,rendered=visible,prefix=prefix,count=1}
+end
+
+function D.server(color,text,result)
+    if result==false then return false end
+    local visible=type(result)=='table' and result[2] or text
+    if combine('server',color,text,visible,'')==false then return false end
+    return result
+end
+
+function D.player(id,text)
+    if not enabled or not enabled[0] then last=nil;return end
+    if not sampIsPlayerConnected(id) then last=nil;return end
+    return combine('player',id,text,text,sampGetPlayerNickname(id))
+end
+
+return D
+
+end
+
 package.preload['src.components.Equipment'] = function()
 -- Blackmarket loadouts use Sputnik's event/hotkey systems and server dialog responses.
 local imgui=require('upmimgui')
@@ -1175,13 +1267,15 @@ local Player=require('src.utils.Player')
 local Overlay=require('src.ui.Overlay')
 local Frequency=require('src.components.Frequency')
 local Parachute=require('src.components.Parachute')
+local ChatDedup=require('src.components.ChatDedup')
 local E={}
-local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),auto_freq=imgui.new.bool(false),last_frequency=0}
+local cfg={frisk={keys={}},repair={keys={}},skip=imgui.new.bool(true),anti_spam=imgui.new.bool(false),auto_freq=imgui.new.bool(false),last_frequency=0}
 local file='config/Leone Menu/misc-extras.json'
 local STARTUP_NOTICE_SECONDS=8
 local state={para_until=0,last_notice=-10,notice_ready=false}
 function E:register()
     Config.load(file,cfg)
+    ChatDedup.configure(cfg.anti_spam)
     -- Legacy nonzero last_frequency was recorded only after a real radio reply.
     if cfg.frequency_known==nil then cfg.frequency_known=cfg.last_frequency~=0 end
     if cfg.frequency_initialized==nil then cfg.frequency_initialized=cfg.frequency_known or cfg.auto_freq[0] end
@@ -1267,6 +1361,12 @@ function E:render_random()
     imgui.DrawChild('Random',function(width)
         imgui.Text('Parachute')
         H.toggle('Skips over parachute but it reappears once you\'re falling - /skippara','skip_para',cfg.skip,width,"Skips over the parachute to the next available weapon or fist, displays a small overlay to notify you that you got a parachute. the parachute appears again when you're falling")
+        imgui.Separator()
+        if H.toggle('Anti Spam','anti_spam',cfg.anti_spam,width,
+            'Prevent repeated messages by showing the count at the end of the chat.\ne.g. [x2] would mean the same chat was repeated 2 times in a row.') then
+            ChatDedup.configure(cfg.anti_spam)
+            self:save_config()
+        end
         imgui.Separator()
         imgui.Text('Shortcuts');imgui.Text('Sign check - /si')
         imgui.Text('Change insurance location - /ins')
@@ -4476,6 +4576,64 @@ return V
 
 end
 
+package.preload['src.components.VestSkinFeed'] = function()
+local Http=require('src.utils.AsyncHttpRequest')
+local R=require('src.core.Rules')
+local Feed={}
+Feed.__index=Feed
+
+function Feed.new()
+    return setmetatable({url='',skins={}},Feed)
+end
+
+function Feed:set_url(value)
+    local url=R.trim(value)
+    if self.url==url then return end
+    self.url=url
+    self.skins={}
+    self.next_check=os.clock()+0.7
+    self.status=url~='' and 'Waiting to load skin IDs...' or nil
+end
+
+function Feed:tick()
+    if self.request and self.request:poll() then self.request=nil end
+    if self.request or self.url=='' or not self.next_check or os.clock()<self.next_check then return end
+
+    local url=self.url
+    local target=url:gsub('#.*$','')
+    local host,path=target:match('^https://([%w.%-]+)(.*)$')
+    if not host or (path~='' and path:sub(1,1)~='/') or target:find('[%s%c]') then
+        self.status='Enter an HTTPS URL for a skin list.'
+        self.next_check=nil
+        return
+    end
+
+    self.next_check=os.clock()+3600
+    self.status='Loading skin IDs...'
+    local function failed(status)
+        if self.url~=url then return end
+        self.status=status..(next(self.skins) and ' Keeping the last list from this URL.' or '')
+        self.next_check=os.clock()+60
+    end
+    local ok,request=pcall(function()
+        return Http:new('GET',path=='' and target..'/' or target,nil,20,true):then_(function(response)
+            if self.url~=url then return end
+            if response.status_code~=200 then return failed('Could not load the skin URL.') end
+            local ids=R.html_skins(response.text)
+            if not ids then return failed('No valid skin ID list was found.') end
+            local skins={}
+            for _,id in ipairs(ids) do skins[id]=true end
+            self.skins=skins
+            self.status=('%d skin IDs loaded.'):format(#ids)
+        end):catch(function() failed('Could not load the skin URL.') end)
+    end)
+    if ok then self.request=request else failed('Could not load the skin URL.') end
+end
+
+return Feed
+
+end
+
 package.preload['src.core.Colors'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\core\Colors.lua
 
@@ -5250,6 +5408,18 @@ function R.alliance(html)
     if date and not date:match('^%d%d/%d%d/%d%d%d%d %d%d:%d%d[AP]M CES?T$') then return nil end
     return {version=version,skins=skins,date=date}
 end
+function R.html_skins(html)
+    if type(html)~='string' or #html>131072 then return nil end
+    local document=html:lower():gsub('^\239\187\191',''):gsub('<!%-%-.-%-%->',' ')
+    local content=document:match('<pre%s[^>]-id%s*=%s*"alliance%-skins"[^>]*>(.-)</pre%s*>')
+        or document:match('<pre%s*>(.-)</pre%s*>') or document:match('<pre%s[^>]*>(.-)</pre%s*>')
+        or document:match('<body%s*>(.-)</body%s*>') or document:match('<body%s[^>]*>(.-)</body%s*>') or document
+    local list_tags={br=true,p=true,div=true,ul=true,ol=true,li=true,code=true,span=true}
+    content=content:gsub('&nbsp;',' '):gsub('</?([%a]+)[^>]*>',function(tag)
+        return list_tags[tag] and ' ' or '?'
+    end)
+    return R.skins(content)
+end
 function R.frequency(text)
     text=R.strip(text)
     local body=text:match('Family MOTD:%s*(.+)')
@@ -5684,7 +5854,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.13',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5913,7 +6083,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.13")
+script_version("1.1.0")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -5925,6 +6095,7 @@ imgui.SetDpiScalingMode(3)
 
 require("src.ui.Widgets")
 local shared = require("src.shared")
+local ChatDedup = require("src.components.ChatDedup")
 
 local SCRIPT_TAG = '{1E3348}[Leone Menu] {FFFFFF}'
 local SCRIPT_COLOR = 0xFF1E3348
@@ -6182,7 +6353,12 @@ local function process_player_tick()
 end
 
 function sampev.onServerMessage(color, text)
-    return shared.event_handler:process("SERVER_MESSAGE", color, text)
+    local result=shared.event_handler:process("SERVER_MESSAGE",color,text)
+    return ChatDedup.server(color,text,result)
+end
+
+function sampev.onChatMessage(id,text)
+    return ChatDedup.player(id,text)
 end
 
 function sampev.onSendDeathNotification(reason,killer)
@@ -7680,7 +7856,7 @@ local sections={
     {'home','Credits','Sputnik credits','Kev and Futurestunt','Garry forum and Discord'},
     {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision'},
     {'auto_vest','Auto Vest','Automatically vest nearby players - /avest','Aim and vest',
-        'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs',
+        'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
         'Accept if vest is below','Manual Accept','Manually accept vest',
@@ -7705,7 +7881,7 @@ local sections={
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
         'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size','Reset size of lawyer cooldown overlay'},
-    {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Sign check - /si','Change insurance location - /ins'},
+    {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Anti Spam','Sign check - /si','Change insurance location - /ins'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
@@ -9950,7 +10126,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.13", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.0", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
