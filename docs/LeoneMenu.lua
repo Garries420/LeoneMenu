@@ -1769,7 +1769,7 @@ function K:render_ui_settings()
     for i,b in ipairs(cfg.binds) do
         imgui.PushID(b.id)
         local width=imgui.GetContentRegionAvail().x
-        imgui.Text(b.command);imgui.SameLine(width-205-imgui.ToggleButtonWidth()-10)
+        imgui.TextUnformatted(b.command);imgui.SameLine(width-205-imgui.ToggleButtonWidth()-10)
         imgui.ToggleButton('##enabled',b.enabled);imgui.SameLine(width-205)
         local keys=shared.hotkey_manager:draw_key_editor('custom_'..b.id,imgui.ImVec2(155,0));if keys then b.keys=keys end
         imgui.SameLine(width-40)
@@ -1779,10 +1779,10 @@ function K:render_ui_settings()
     imgui.EndChild()
     if imgui.AnimButton('Add') then draft.command='';draft.keys={};shared.hotkey_manager.registered.custom_draft.keys={};imgui.OpenPopup('Add Keybind') end
     if imgui.BeginPopupModal('Add Keybind',nil,imgui.WindowFlags.AlwaysAutoResize) then
-        draft.command=H.input('##custom_command',draft.command,'/dance 1',350,128)
+        draft.command=H.input('##custom_command',draft.command,'Add your text here...',350,128)
         local keys=shared.hotkey_manager:draw_key_editor('custom_draft',imgui.ImVec2(180,0));if keys then draft.keys=keys end
         if imgui.AnimButton('Save') then
-            if not draft.command:match('^/%S+') or draft.command:find('[\r\n]') or #draft.keys==0 then msg('Enter a command beginning with / and choose a keybind.')
+            if not draft.command:find('%S') or draft.command:find('[\r\n]') or #draft.keys==0 then msg('Enter text or a command and choose a keybind.')
             else
                 shared.hotkey_manager.registered.custom_draft.keys={}
                 local b={id=cfg.next_id,command=draft.command,keys=draft.keys,enabled=imgui.new.bool(true)}
@@ -5554,7 +5554,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.10',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.11',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5783,7 +5783,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.10")
+script_version("1.0.11")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -9820,7 +9820,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.10", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.11", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
