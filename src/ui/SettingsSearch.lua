@@ -9,7 +9,7 @@ local sections={
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
-    {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical'},
+    {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of vest overlays'},
     {'backup','Backup','Show active backup requests','Faction backup keybind','All custom locations','Mention wanted level'},
     {'backup','Portable Radio','Show frequency in chat messages','Checks /fmotd for alliance frequency and changes freq'},
     {'backup','Position & Appearance##backup','Backup overlay position','Draw a background','Draw a border'},
@@ -28,7 +28,7 @@ local sections={
     {'miscellaneous','Beacon Resolver','Resolve player IDs when written as "B20" to their actual name instead'},
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
-        'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size'},
+        'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size','Reset size of lawyer cooldown overlay'},
     {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Sign check - /si','Change insurance location - /ins'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
@@ -39,7 +39,7 @@ local sections={
         'Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
     {'capture','Points','Show upcoming point war info','Show active point war info','Automatically capture points - /acapp'},
     {'capture','Regroup checker','Checks the surrounding area for our own members','Quick usage - /rgcheck','RGCHECK'},
-    {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical'},
+    {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of turf and point overlays'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
     {'phone','SMS Players','Send SMS - /pm'}
 }

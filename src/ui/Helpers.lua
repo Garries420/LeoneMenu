@@ -15,6 +15,13 @@ function H.position_text(width,button_width)
     imgui.EndGroup()
     imgui.SameLine(width-button_width)
 end
+H.reset_size_width=100
+function H.reset_size_button(configs,prefix)
+    if imgui.AnimButton('Reset size##'..prefix,imgui.ImVec2(H.reset_size_width,0)) then
+        for _,cfg in ipairs(configs) do cfg.scale[0]=1 end
+        save_config()
+    end
+end
 function H.realign(configs,prefix)
     local saved={}
     for i,cfg in ipairs(configs) do
@@ -49,13 +56,15 @@ function H.bind(label,id,cfg,width)
 end
 function H.position(configs,prefix)
     imgui.DrawChild('Position##'..prefix,function(width)
-        H.position_text(width,200+imgui.GetStyle().ItemSpacing.x)
+        H.position_text(width,200+H.reset_size_width+2*imgui.GetStyle().ItemSpacing.x)
         if imgui.AnimButton('Style##'..prefix,imgui.ImVec2(80,0)) then
             local horizontal=not configs[1].horizontal[0]
             for _,cfg in ipairs(configs)do cfg.horizontal[0]=horizontal end
             save_config()
         end
         if imgui.IsItemHovered()then imgui.SetTooltip('Changes the style of the overlay. Stacked and Vertical')end
+        imgui.SameLine()
+        H.reset_size_button(configs,prefix)
         imgui.SameLine()
         if imgui.AnimButton('Position##'..prefix,imgui.ImVec2(120,0)) then
             H.realign(configs,prefix)

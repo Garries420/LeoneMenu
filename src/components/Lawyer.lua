@@ -236,7 +236,9 @@ function Lawyer:render()
         cfg.cooldown[0]=cooldown()
         imgui.TextDisabled('The minimum cooldown is 1 minute. Add a few seconds to allow for lag or delay.')
         imgui.Separator()
-        H.position_text(width,imgui.ToggleButtonWidth()+104+imgui.GetStyle().ItemSpacing.x)
+        H.position_text(width,imgui.ToggleButtonWidth()+104+H.reset_size_width+2*imgui.GetStyle().ItemSpacing.x)
+        H.reset_size_button({cfg.overlay},'lawyer')
+        imgui.SameLine()
         if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
             H.realign({cfg.overlay},'lawyer')
         end
