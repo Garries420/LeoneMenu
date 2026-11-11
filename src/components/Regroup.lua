@@ -15,10 +15,13 @@ local function collecting_here(snapshot)
     local x,y=getCharCoordinates(PLAYER_PED)
     return (x-snapshot.x)^2+(y-snapshot.y)^2<=25
 end
+local function can_mass_mention()
+    return G.rank==5 or G.rank==6
+end
 
 function G:run()
     if self.collect then return end
-    self.rows={};self.error=nil;self.pending=nil;self.mass=nil
+    self.rows={};self.error=nil;self.pending=nil;self.mass=nil;self.rank=nil
     self.open=true;self.visible=true
     if not doesCharExist(PLAYER_PED) or not sampIsLocalPlayerSpawned() or sampGetGamestate()~=3 then
         self.error='Wait until you have spawned, then run /rgcheck again.';return
@@ -35,7 +38,10 @@ function G:run()
         end
     end
     local me,id=sampGetPlayerIdByCharHandle(PLAYER_PED)
-    if me then snapshot.nearby[name_key(sampGetPlayerNickname(id))]=true end
+    if me then
+        snapshot.local_name=name_key(sampGetPlayerNickname(id))
+        snapshot.nearby[snapshot.local_name]=true
+    end
     self.collect=snapshot
     samp_send_hidden_command('members')
 end
@@ -45,6 +51,7 @@ local function finish_members()
     G.collect=nil
     if not collecting_here(snapshot) then G.error='You moved while checking. Run /rgcheck again.';return end
     if not snapshot.header or not snapshot.last then G.error='Could not read /members. Run /rgcheck again.';return end
+    G.rank=snapshot.rank
     for key,row in pairs(snapshot.members) do
         if not snapshot.nearby[key] and not row.jailed then
             row.id=Player:get_player_id_by_name(row.name:gsub(' ','_'))
@@ -99,7 +106,7 @@ local function find_result(text)
 end
 
 function G:mention()
-    if self.mass or self.collect or #self.rows==0 then return end
+    if not can_mass_mention() or self.mass or self.collect or #self.rows==0 then return end
     local names,batches={},{}
     for _,row in ipairs(self.rows) do
         if same_player(row) then names[#names+1]=row.name end
@@ -127,10 +134,12 @@ function G:register()
         if snapshot and os.clock()-snapshot.started<=6 then
             if plain=='Members Online:' then snapshot.header=true;return false end
             if snapshot.header then
-                local color,name=text:match('^%* .- {(%x%x%x%x%x%x)}(.-){%x%x%x%x%x%x}%s+%(%d+%)')
+                local color,name,rank=text:match('^%* .- {(%x%x%x%x%x%x)}(.-){%x%x%x%x%x%x}%s+%((%d+)%)')
                 if name then
                     color=color:upper();name=R.trim(R.strip(name))
-                    snapshot.members[name_key(name)]={name=name,jailed=color=='FF8000' or color=='6F570E'}
+                    local key=name_key(name)
+                    if key==snapshot.local_name then snapshot.rank=tonumber(rank) end
+                    snapshot.members[key]={name=name,jailed=color=='FF8000' or color=='6F570E'}
                     snapshot.last=os.clock();return false
                 end
             end
@@ -155,6 +164,18 @@ function G:register()
         end
     end)
     imgui.OnFrame(function()return self.visible end,function()self:render()end)
+end
+
+local function draw_locked_mass_mention(size)
+    imgui.PushStyleColor(imgui.Col.Button,imgui.ImVec4(0.30,0.30,0.30,1))
+    imgui.BeginDisabled()
+    imgui.Button('Mass mention',size)
+    imgui.EndDisabled()
+    imgui.PopStyleColor()
+
+    local min,max=imgui.GetItemRectMin(),imgui.GetItemRectMax()
+    imgui.GetWindowDrawList():AddLine(imgui.ImVec2(min.x+8,max.y-6),imgui.ImVec2(max.x-8,min.y+6),
+        imgui.GetColorU32(imgui.ImVec4(1,0.22,0.22,0.85)),2)
 end
 
 function G:render()
@@ -192,9 +213,16 @@ function G:render()
         imgui.Separator();imgui.PopID()
     end
     imgui.EndChild();imgui.Separator()
-    if imgui.AnimButton('Mass mention',imgui.ImVec2(150,38)) and #self.rows>0 and not self.collect and not self.mass then imgui.OpenPopup('Confirm mass mention')end
-    if imgui.IsItemHovered()then
-        imgui.BeginTooltip();imgui.TextColored(imgui.ImVec4(1,0,0,1),'WARNING, this WILL spam chat with their names');imgui.EndTooltip()
+    local mention_size=imgui.ImVec2(150,38)
+    if can_mass_mention() then
+        if imgui.AnimButton('Mass mention',mention_size) and #self.rows>0 and not self.collect and not self.mass then
+            imgui.OpenPopup('Confirm mass mention')
+        end
+    else
+        draw_locked_mass_mention(mention_size)
+    end
+    if imgui.IsItemHovered(imgui.HoveredFlags.AllowWhenDisabled) then
+        imgui.SetTooltip('Only Rank 5 and Rank 6 are allowed to use this feature')
     end
     imgui.SameLine()
     if imgui.AnimButton('Close',imgui.ImVec2(150,38))then self.visible=false;imgui.CloseCurrentPopup()end
