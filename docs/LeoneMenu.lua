@@ -2036,7 +2036,9 @@ function Lawyer:render()
         cfg.cooldown[0]=cooldown()
         imgui.TextDisabled('The minimum cooldown is 1 minute. Add a few seconds to allow for lag or delay.')
         imgui.Separator()
-        H.position_text(width,imgui.ToggleButtonWidth()+104+imgui.GetStyle().ItemSpacing.x)
+        H.position_text(width,imgui.ToggleButtonWidth()+104+H.reset_size_width+2*imgui.GetStyle().ItemSpacing.x)
+        H.reset_size_button({cfg.overlay},'lawyer')
+        imgui.SameLine()
         if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
             H.realign({cfg.overlay},'lawyer')
         end
@@ -5552,7 +5554,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.9',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.10',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5781,7 +5783,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.9")
+script_version("1.0.10")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -6899,6 +6901,13 @@ function H.position_text(width,button_width)
     imgui.EndGroup()
     imgui.SameLine(width-button_width)
 end
+H.reset_size_width=100
+function H.reset_size_button(configs,prefix)
+    if imgui.AnimButton('Reset size##'..prefix,imgui.ImVec2(H.reset_size_width,0)) then
+        for _,cfg in ipairs(configs) do cfg.scale[0]=1 end
+        save_config()
+    end
+end
 function H.realign(configs,prefix)
     local saved={}
     for i,cfg in ipairs(configs) do
@@ -6933,13 +6942,15 @@ function H.bind(label,id,cfg,width)
 end
 function H.position(configs,prefix)
     imgui.DrawChild('Position##'..prefix,function(width)
-        H.position_text(width,200+imgui.GetStyle().ItemSpacing.x)
+        H.position_text(width,200+H.reset_size_width+2*imgui.GetStyle().ItemSpacing.x)
         if imgui.AnimButton('Style##'..prefix,imgui.ImVec2(80,0)) then
             local horizontal=not configs[1].horizontal[0]
             for _,cfg in ipairs(configs)do cfg.horizontal[0]=horizontal end
             save_config()
         end
         if imgui.IsItemHovered()then imgui.SetTooltip('Changes the style of the overlay. Stacked and Vertical')end
+        imgui.SameLine()
+        H.reset_size_button(configs,prefix)
         imgui.SameLine()
         if imgui.AnimButton('Position##'..prefix,imgui.ImVec2(120,0)) then
             H.realign(configs,prefix)
@@ -7544,7 +7555,7 @@ local sections={
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
-    {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical'},
+    {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of vest overlays'},
     {'backup','Backup','Show active backup requests','Faction backup keybind','All custom locations','Mention wanted level'},
     {'backup','Portable Radio','Show frequency in chat messages','Checks /fmotd for alliance frequency and changes freq'},
     {'backup','Position & Appearance##backup','Backup overlay position','Draw a background','Draw a border'},
@@ -7563,7 +7574,7 @@ local sections={
     {'miscellaneous','Beacon Resolver','Resolve player IDs when written as "B20" to their actual name instead'},
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
-        'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size'},
+        'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size','Reset size of lawyer cooldown overlay'},
     {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Sign check - /si','Change insurance location - /ins'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
@@ -7574,7 +7585,7 @@ local sections={
         'Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
     {'capture','Points','Show upcoming point war info','Show active point war info','Automatically capture points - /acapp'},
     {'capture','Regroup checker','Checks the surrounding area for our own members','Quick usage - /rgcheck','RGCHECK'},
-    {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical'},
+    {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of turf and point overlays'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
     {'phone','SMS Players','Send SMS - /pm'}
 }
@@ -9809,7 +9820,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.9", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.10", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
