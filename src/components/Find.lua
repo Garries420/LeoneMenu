@@ -91,7 +91,7 @@ function F:register()
         return state.enabled and Rules.trim(Rules.strip(text))=='You are not a detective.'
     end,function() stop(true);return false end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)
-        return state.enabled and (text=='You are unable to find this person.' or text=="You can't find that person as they're hidden in one of their turfs." or text=='You have already searched for someone - wait a little.')
+        return state.has_sent and (text=='You are unable to find this person.' or text=="You can't find that person as they're hidden in one of their turfs." or text=='You have already searched for someone - wait a little.')
     end,function() timer:set_temp_interval(math.max(state.has_sent and timer:time_remaining()or 0,5));state.has_sent=true end)
     shared.event_handler:register('SEND_COMMAND',function(command)
         local name=command:match('^/(%S+)')
@@ -103,12 +103,22 @@ function F:register()
     MainWindow:add_page('find',{title='Autofind',icon=fa('LOCATION_DOT'),render_function=function() F:render_ui_settings() end})
 end
 function F:save_config() return Config.save('config/Leone Menu/autofind.json',cfg) end
+function F:cooldown_remaining()
+    return state.has_sent and math.ceil(timer:time_remaining()) or 0
+end
+function F:find_once(id)
+    if self:cooldown_remaining()>0 or not sampIsPlayerConnected(id) then return false end
+    timer:trigger();state.has_sent=true
+    samp_send_hidden_command('find',tostring(id))
+    return true
+end
 function F:render_ui_settings()
     imgui.DrawChild('Autofind',function(width)
         imgui.Text('Find Player:');imgui.Text('CMD: /af [Player ID / Name]');imgui.Separator()
         imgui.Text('Cohort Player:');imgui.Text('CMD: /afco [Player ID / Name]')
         imgui.TextWrapped('Note: It will find the player as well as their cohort.');imgui.Separator()
-        imgui.Text('Adjust Cooldown:');imgui.Text('Currently (s)');imgui.SameLine();imgui.SetNextItemWidth(160);imgui.InputInt('##find_interval',cfg.interval);cfg.interval[0]=math.max(15,math.min(140,cfg.interval[0]))
+        imgui.Text('Adjust Cooldown (seconds):');imgui.Spacing()
+        imgui.Text('Currently');imgui.SameLine();imgui.SetNextItemWidth(160);imgui.InputInt('##find_interval',cfg.interval);cfg.interval[0]=math.max(15,math.min(140,cfg.interval[0]))
         imgui.Separator();imgui.Text('Suggested Cooldown:')
         for i,v in ipairs({125,85,65,35,20}) do imgui.Text('Level '..i..': '..v..'s') end
         imgui.TextWrapped('Note: To prevent lag issues add an extra 4-5 seconds.')

@@ -13,7 +13,7 @@ local shared=require('src.shared')
 
 local Lawyer={}
 local path='config/Leone Menu/lawyer.json'
-local cfg={cooldown=imgui.new.int(66),defend={keys={}},free={keys={}},overlay=Overlay.setup_overlay_defaults(
+local cfg={cooldown=imgui.new.int(70),defend={keys={}},free={keys={}},overlay=Overlay.setup_overlay_defaults(
     true,0.015,0.64,14,6,1,2,true,{0,0,0,0.588},true,{0,0,0,0.588})}
 local labels={defend='Auto Lawyer',free='Auto Free'}
 local commands={defend='al',free='afree'}
@@ -139,6 +139,10 @@ local function handle_wanted_reply(color,text)
 end
 
 local function handle_chat(color,text)
+    local wait_seconds=text:match('^You must wait (%d+) seconds? before you can defend again!$')
+    if wait_seconds and os.clock()<attempted_until then
+        cooldown_until=math.max(cooldown_until,os.clock()+tonumber(wait_seconds)+1)
+    end
     if (text=='You are not a Lawyer!' and (next(active) or wanted or os.clock()<attempted_until))
         or (wanted and os.clock()<=wanted.expires and text=="You're not a Lawyer / Cop / FBI!") then
         active={}
@@ -168,6 +172,7 @@ end
 
 function Lawyer:register()
     Config.load(path,cfg)
+    if cfg.cooldown[0]==66 then cfg.cooldown[0]=70 end
     cfg.cooldown[0]=cooldown()
     for _,mode in ipairs({'defend','free'}) do
         local command=commands[mode]
@@ -216,23 +221,27 @@ function Lawyer:register()
 end
 
 function Lawyer:save_config() return Config.save(path,cfg) end
+function Lawyer:get_overlay_config()return cfg.overlay end
 
 function Lawyer:render()
     imgui.DrawChild('Lawyering',function(width)
         imgui.Text('Auto Lawyer - /al ID (type /al or same ID again to stop/start)')
         H.bind('Auto Lawyer nearest wanted','lawyer_defend',cfg.defend,width)
+        imgui.Separator()
         imgui.Text('Auto Free - /afree ID (type /afree or same ID again to stop/start)')
         H.bind('Auto Free nearest prisoner','lawyer_free',cfg.free,width)
+        imgui.Separator()
         imgui.Text('Cooldown on /afree and /al');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##lawyer_cooldown',cfg.cooldown)
         cfg.cooldown[0]=cooldown()
-        imgui.Text('Overlay')
-        imgui.SameLine(width-imgui.ToggleButtonWidth()-104-imgui.GetStyle().ItemSpacing.x)
-        if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
-            Realign:realign_element(function(x,y) cfg.overlay.pos.x[0]=x;cfg.overlay.pos.y[0]=y end,{preview='lawyer'})
-        end
-        imgui.SameLine();imgui.ToggleButton('##lawyer_overlay',cfg.overlay.display)
         imgui.TextDisabled('The minimum cooldown is 1 minute. Add a few seconds to allow for lag or delay.')
+        imgui.Separator()
+        H.position_text(width,imgui.ToggleButtonWidth()+104+imgui.GetStyle().ItemSpacing.x)
+        if imgui.AnimButton('Position##lawyer',imgui.ImVec2(104,0)) then
+            H.realign({cfg.overlay},'lawyer')
+        end
+        H.position_tip()
+        imgui.SameLine();imgui.ToggleButton('##lawyer_overlay',cfg.overlay.display)
     end)
 end
 

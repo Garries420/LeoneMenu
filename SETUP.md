@@ -17,14 +17,17 @@ The menu checks this feed on startup, on reload, hourly, and from Home.
 1. Advance the menu version in `release.json`, `src/main.lua`, and `src/core/Updates.lua`.
 2. Run `python tools/build.py --rar` with WinRAR installed to generate the full archive and update feed.
 3. Create a GitHub release at the matching `v` tag and upload the complete `Leone Menu V<version>.rar` as its install asset.
-4. After the release is visible, publish the generated `LeoneMenu.lua` and `leone-update.json` together under `docs/`.
+4. After the release is visible, publish the generated `LeoneMenu.lua` and `leone-update-v2.json` together under `docs/`.
 
-The in-game updater downloads only the Lua and reloads it. The generated Lua
+The in-game updater downloads only the Lua and installs it for the next GTA
+launch. Checks wait until the startup overlay finishes. The running Lua and
+renderer remain loaded until the player closes GTA. The generated Lua
 checks the packaged library and resource files before normal startup. If the
 player needs the full package, it opens the required update dialog once for
 that package. The independent alliance HTML is excluded from the package
-check. Keep the legacy manifest `runtime` value at 5 so older test builds can
-transition to this updater. New builds verify the files directly.
+check. Keep `runtime` at 5 while the bundled files are unchanged. New builds
+verify the files directly. The retired `leone-update.json` feed must remain
+absent; versions predating the restart-safe updater require a manual install.
 
 To restore the previous script, close GTA and copy
 `moonloader/config/Leone Menu/LeoneMenu.previous.lua` over `moonloader/LeoneMenu.lua`.

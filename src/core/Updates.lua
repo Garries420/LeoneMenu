@@ -2,14 +2,14 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.7',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.8',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
 local staged,completed,http_request
 local startup_checked,manual_queued,manual_skins=false,false,false
 local next_skins_at=0
-local initial={132,137,209,212,230,236,107,195,270,269,271,106,293,0,68,200,62,221,229,214,127,124,24,164,202,66,234,235,261,272,43,91,2,291,93,101,233,126,211}
+local initial={68,94,62,221,214,229,234,235,261,272,43,91,132,137,209,212,230,236,24,25,124,69,164,202,107,195,270,269,271,106}
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end

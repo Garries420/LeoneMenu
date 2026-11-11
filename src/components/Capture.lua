@@ -33,16 +33,25 @@ local function ended(name)
     -- Requested for every point end, including players who never attended.
     for i=1,5 do sampAddChatMessage('{FF0000}'..warning,0xFFFF0000) end
     if flagged and not isCharInAnyCar(PLAYER_PED) then
-        require('src.ui.Dialogs').show('Leone Menu - Point ended','\n\t{FF0000}'..warning..'\n',0,'OK',nil,true,function() return not isCharInAnyCar(PLAYER_PED) end)
+        require('src.ui.Dialogs').show('Leone Menu - Point ended','\n\t{FF0000}'..warning..'\n',0,'OK',nil,true,function() return not isCharInAnyCar(PLAYER_PED) end,'point_ended',true)
     end
 end
 function C:register()
+    require('src.components.Regroup'):register()
     require('src.ui.MainWindow'):add_page('capture',{title='Turfs & Points',icon=fa('MAP'),render_function=function()
         require('src.components.Turfs'):render_ui_settings()
         require('src.components.Points'):render_ui_settings()
-        H.position({require('src.components.Turfs'):get_overlay_config()},'capture')
+        imgui.DrawChild('Regroup checker',function()
+            imgui.TextWrapped('Checks the surrounding area for our own members and displays who is not there when compared to /members list')
+            imgui.Text('Quick usage: /rgcheck')
+            if imgui.AnimButton('RGCHECK')then require('src.components.Regroup'):run()end
+        end)
+        H.position({require('src.components.Turfs'):get_overlay_config(),Points:get_overlay_config()},'capture')
     end})
     shared.event_handler:register('POINT_ENDED',function(name) return {name} end,ended)
+    shared.event_handler:register('LOCAL_DAMAGE',function(player,damage)
+        return player>=0 and player<65535 and damage>0
+    end,function() require('src.ui.Dialogs').cancel('point_ended') end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)
         local name=R.strip(text):match('^.- has taken control of the (.-) for .-%.$')
         return name and {name} or false

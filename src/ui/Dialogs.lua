@@ -1,7 +1,14 @@
 -- Client-only SA-MP dialogs. Never submits a locally-owned dialog to HZG.
 local D={queue={},active=nil,id=32760}
-function D.show(title,text,style,button,callback,required,eligible)
-    D.queue[#D.queue+1]={title=title,text=text,style=style,button=button,callback=callback,required=required,eligible=eligible}
+function D.show(title,text,style,button,callback,required,eligible,tag,allow_escape)
+    D.queue[#D.queue+1]={title=title,text=text,style=style,button=button,callback=callback,required=required,eligible=eligible,tag=tag,allow_escape=allow_escape}
+end
+function D.cancel(tag)
+    for i=#D.queue,1,-1 do if D.queue[i].tag==tag then table.remove(D.queue,i) end end
+    if D.active and D.active.tag==tag then
+        D.active=nil
+        if sampIsDialogActive() and sampGetCurrentDialogId()==D.id then sampCloseCurrentDialogWithButton(0) end
+    end
 end
 function D.start(recovery)
     if recovery then
@@ -27,7 +34,7 @@ function D.start(recovery)
                 local result,button,list,input=sampHasDialogRespond(D.id)
                 if result then
                     local item=D.active;D.active=nil
-                    if button~=1 and item.required then table.insert(D.queue,1,item)
+                    if button~=1 and item.required and not item.allow_escape then table.insert(D.queue,1,item)
                     elseif button==1 and item.callback then item.callback(list,input) end
                 elseif sampIsDialogActive() and sampGetCurrentDialogId()~=D.id then
                     table.insert(D.queue,1,D.active);D.active=nil

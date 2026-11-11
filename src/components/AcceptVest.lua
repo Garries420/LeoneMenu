@@ -11,6 +11,7 @@ local Player = require("src.utils.Player")
 local shared = require("src.shared")
 local Timer = require("src.core.Timer")
 local Rules = require("src.core.Rules")
+local VestRules=require('src.core.VestRules')
 
 local ACCEPT_VEST = {
     DEFAULT_PRICE = 200,
@@ -20,7 +21,6 @@ local ACCEPT_VEST = {
 }
 
 local CONFIG_PATH = "config/Leone Menu/acceptvest.json"
-local OUTSIDE_POINT_MESSAGE = "You can't heal if you were recently shot, except within points, events, minigames, and paintball."
 
 local default_data = {
     accept_below = imgui.new.int(50),
@@ -64,6 +64,7 @@ local function _set_pending_offer(from_id, price)
 end
 
 local function _handle_ped_tick(x, y, z)
+    if not VestRules.can_accept() then _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE);return end
     if not _accept_vest_state.is_enabled[0] then
         return
     end
@@ -109,17 +110,6 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
-        function(color,text)
-            return _accept_vest_state.is_enabled[0] and Rules.strip(text)==OUTSIDE_POINT_MESSAGE
-        end,
-        function()
-            _accept_vest_state.is_enabled[0]=false
-            msg("Not at point detected, Auto Vest has been turned {FF0000}OFF")
-        end
-    )
-
-    shared.event_handler:register(
-        "SERVER_MESSAGE",
         function(color, text)
             if color == Colors.LIGHTBLUE then
                 local player_name, price = text:match(
@@ -132,6 +122,7 @@ local function _register_event_handlers()
             return false
         end,
         function(player_name, price)
+            if not VestRules.can_accept() then _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE);return end
             local raw_name = player_name:gsub(" ", "_")
             local player_id = Player:get_player_id_by_name(raw_name)
 
@@ -243,14 +234,18 @@ end
 
 function AcceptVest:register()
     carboneum.load(CONFIG_PATH, _config)
+    VestRules.register()
 
     _register_event_handlers()
     _register_commands()
 
     shared.hotkey_manager:register('manual_accept_vest',_config.manual.keys,function()
-        if _config.manual.enabled[0] then
+        if _config.manual.enabled[0] and VestRules.can_accept() then
             sampSendChat('/accept bodyguard')
         end
+    end)
+    shared.event_handler:register('HOSPITAL_ADMITTED',function()return true end,function()
+        _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE)
     end)
 end
 
@@ -270,11 +265,16 @@ function AcceptVest:render_ui_settings()
     local H=require('src.ui.Helpers')
     imgui.DrawChild('Accept Vest',function(width)
         H.toggle('Automatically accept vest offers priced at $200 - /av','accept_vest',_accept_vest_state.is_enabled,width)
+        imgui.Separator()
         imgui.Text('Accept if vest is below');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##accept_below',_config.accept_below);_config.accept_below[0]=math.max(0,math.min(100,_config.accept_below[0]))
+        imgui.Separator()
         H.toggle('Manual Accept','manual_accept_enable',_config.manual.enabled,width)
+        imgui.Separator()
         H.bind('Manually accept vest','manual_accept_vest',_config.manual,width)
+        imgui.Separator()
         H.toggle('Automatically stop accepting vest offers upon point completion','disable_after_point',_config.should_disable_after_point,width)
+        imgui.Separator()
         H.toggle('Show offered-by overlay','offered_by',_config.overlay.display,width)
     end)
 end

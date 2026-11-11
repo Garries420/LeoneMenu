@@ -39,7 +39,7 @@ function E:render()
         for i,g in ipairs(Import.rows)do
             imgui.PushStyleColor(imgui.Col.Text,color(g.hex))
             if imgui.Selectable(g.name..'##import'..i,false,imgui.SelectableFlags.NoAutoClosePopups)then
-                self.name=g.name;self.hex=g.hex;self.error=nil
+                self.name=g.name;self.hex=g.hex;self.error=nil;Import.visible=false
             end
             imgui.PopStyleColor()
         end

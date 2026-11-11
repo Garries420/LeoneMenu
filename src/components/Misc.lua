@@ -29,6 +29,9 @@ local default_data = {
     auto_accept_repair = {
         enabled = imgui.new.bool(true),
     },
+    auto_accept_lawyer = {
+        enabled = imgui.new.bool(true),
+    },
     auto_pick_lock = {
         enabled = imgui.new.bool(true),
     },
@@ -246,6 +249,18 @@ local function _register_event_handlers()
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
+        function(_, text)
+            if not _config.auto_accept_lawyer.enabled[0] then return false end
+            local offer=Rules.trim(Rules.strip(text))
+            local price=offer:match('^%* Lawyer .+ wants to defend you for %$(%d[%d,]*), %(type /accept defense%) to accept%.$')
+            return price and tonumber((price:gsub(',','')))==200
+                and sampGetGamestate()==3 and sampIsLocalPlayerSpawned()
+        end,
+        function() sampSendChat('/accept defense') end
+    )
+
+    shared.event_handler:register(
+        "SERVER_MESSAGE",
         function(color, text)
             if color == Colors.WHITE and _config.auto_pick_lock.enabled[0] and text == "You have failed to pick the lock!" then
                 return true
@@ -457,6 +472,7 @@ function Misc:render_portable_radio()
         if imgui.ToggleButton("##show_frequency", _config.portable_radio.show_frequency) then
             Misc:save_config()
         end
+        imgui.Separator()
         require("src.components.Extras"):render_radio(width)
     end)
 end
@@ -513,6 +529,12 @@ function Misc:render_ui_settings()
         imgui.Text("Automatically accept $1 repair offers from players")
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##auto_accept_repair", _config.auto_accept_repair.enabled)
+        imgui.Separator()
+
+        imgui.Text('Automatically accept lawyer offered at $200')
+        imgui.SameLine(width - imgui.ToggleButtonWidth())
+        if imgui.ToggleButton('##auto_accept_lawyer', _config.auto_accept_lawyer.enabled) then Misc:save_config() end
+        imgui.Separator()
         require("src.components.Extras"):render_repair(width)
 
         imgui.Separator()
@@ -542,6 +564,7 @@ function Misc:render_ui_settings()
         if imgui.AnimButton(fa('PLAY')..' Play##sniper_warning',imgui.ImVec2(85,0)) then FriskWarning.play() end
         imgui.SameLine()
         imgui.ToggleButton("##sniper_frisk_sound", _config.sniper_frisk_sound.enabled)
+        imgui.Separator()
         require("src.components.Extras"):render_frisk(width)
     end)
 

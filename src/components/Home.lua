@@ -24,7 +24,7 @@ function Home:register()
         if imgui.AnimButton('Check for updates') then Home.update_check_requested=true end
         imgui.TextWrapped(U.status)
         imgui.TextWrapped(U.skins_status)
-        imgui.Text('Version Date: '..(U.alliance.date or 'Unavailable'))
+        imgui.Text('Alliance Skin Date: '..(U.alliance.date or 'Unavailable'))
         if imgui.IsItemHovered() then imgui.SetTooltip('Day/Month/year - Swedish Timezone') end
     end})
     MainWindow:select_page('home')

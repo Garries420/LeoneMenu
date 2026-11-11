@@ -46,7 +46,7 @@ if previous is None or version <= int(previous[1]):
 html = re.sub(pattern, f'<meta name="leone-skins-version" content="{version}">\n'
               f'<meta name="leone-skins-date" content="{date}">', html, count=1)
 html = re.sub(r'(<h1>Leone alliance skins</h1>)<p>[^<]+</p>',
-              rf'\1<p>Version Date: {date}</p>', html, count=1)
+              rf'\1<p>Alliance Skin Date: {date}</p>', html, count=1)
 html = re.sub(r'<small>[^<]+</small>', '<small>Independent alliance skin list for Leone Menu.</small>', html, count=1)
 data = html.encode('utf-8')
 (root / 'skins').mkdir(exist_ok=True)

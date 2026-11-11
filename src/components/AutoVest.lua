@@ -16,6 +16,7 @@ local Overlay = require("src.ui.Overlay")
 local Player = require("src.utils.Player")
 local shared = require("src.shared")
 local Timer = require("src.core.Timer")
+local VestRules=require('src.core.VestRules')
 
 local COMMAND_MODE = {
     NORMAL = 0,
@@ -33,7 +34,7 @@ local default_data = {
         current = imgui.new.int(COMMAND_MODE.NORMAL),
         intervals = {
             [COMMAND_MODE.NORMAL] = imgui.new.int(13),
-            [COMMAND_MODE.DD] = imgui.new.int(10),
+            [COMMAND_MODE.DD] = imgui.new.int(7),
         },
     },
     vester_mode = imgui.new.int(VESTER_MODE.AUTOMATIC),
@@ -88,7 +89,7 @@ local function _process_aim_request()
     local request=_auto_vest_state.aim_request
     if not request then return end
     local function cancel()_auto_vest_state.aim_request=nil end
-    if not sampIsLocalPlayerSpawned() or sampGetGamestate()~=3 or is_cursor_active()
+    if not VestRules.can_offer(true) or sampGetGamestate()~=3 or is_cursor_active()
         or sampIsChatInputActive() or sampIsDialogActive() or isPauseMenuActive()
         or MainWindow:is_open() or (isGameWindowForeground and not isGameWindowForeground())
         or not sampIsPlayerConnected(request.id) or sampGetPlayerNickname(request.id)~=request.name then
@@ -120,7 +121,8 @@ local function _find_closest_valid_player(attempt)
     local connected,local_id=sampGetPlayerIdByCharHandle(PLAYER_PED)
 
     local function is_valid_player(player, id)
-        if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player) then return false end
+        if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player)
+            or sampIsPlayerPaused(id) or isCharPlayingAnim(player,'KILL_Knife_Ped_Die') then return false end
 
         local skin=getCharModel(player)
         local match=_config.vester_mode[0]==VESTER_MODE.AUTOMATIC and Updates.is_alliance(skin)
@@ -198,6 +200,7 @@ end
 
 local function _handle_ped_tick()
     local state=_auto_vest_state
+    if not VestRules.can_offer(false) then state.attempt=nil;return end
     local now=os.clock()
     local attempt=state.attempt
     if now<state.next_offer_at or (attempt and now<attempt.reply_by) then return end
@@ -311,29 +314,14 @@ local function _register_commands()
         end
     )
 
-    sampRegisterChatCommand('avmode',function(args)
-        local modes={automatic=0,manual=1}
-        if modes[args]==nil then return msg('USAGE: /avmode automatic/manual') end
-        _config.vester_mode[0]=modes[args]
-    end)
-
-    sampRegisterChatCommand(
-        "ddmode",
-        function()
-            local old_mode = _config.command_mode.current[0]
-            local modes_reverse = {
-                [COMMAND_MODE.NORMAL] = "Normal",
-                [COMMAND_MODE.DD] = "DD"
-            }
-
-            _config.command_mode.current[0] = old_mode == COMMAND_MODE.DD and COMMAND_MODE.NORMAL or COMMAND_MODE.DD
-
-            msg(string.format(
-                "Vester Command Mode has been switched to '%s' mode (Previous: '%s' mode)",
-                modes_reverse[_config.command_mode.current[0]], modes_reverse[old_mode]
-            ))
-        end
-    )
+    local function swap_mode()
+        local mode=_config.command_mode.current[0]==COMMAND_MODE.DD and COMMAND_MODE.NORMAL or COMMAND_MODE.DD
+        _config.command_mode.current[0]=mode
+        local name,command=mode==COMMAND_MODE.DD and 'DD' or 'Normal',mode==COMMAND_MODE.DD and '/guardnear' or '/guard'
+        msg(('Auto Vest Mode has changed to {00FF00}%s{FFFFFF} (%s) %ds delay'):format(name,command,_config.command_mode.intervals[mode][0]))
+    end
+    sampRegisterChatCommand('avmode',swap_mode)
+    sampRegisterChatCommand('ddmode',swap_mode)
 end
 
 local AutoVest = {}
@@ -354,9 +342,15 @@ end
 
 function AutoVest:register()
     carboneum.load(CONFIG_PATH, _config)
+    if _config.command_mode.intervals[COMMAND_MODE.DD][0]==10 then _config.command_mode.intervals[COMMAND_MODE.DD][0]=7 end
+    VestRules.register()
 
     _register_event_handlers()
     _register_commands()
+    shared.event_handler:register('HOSPITAL_ADMITTED',function()return true end,function()
+        _auto_vest_state.pending=nil;_auto_vest_state.attempt=nil;_auto_vest_state.aim_request=nil
+        _auto_vest_state.cooldown_until=0
+    end)
     shared.hotkey_manager:register('aim_vest',_config.aim.keys,function()
         local ok,ped=getCharPlayerIsTargeting(PLAYER_HANDLE)
         if not ok or not doesCharExist(ped) then return end
@@ -403,9 +397,11 @@ end
 function AutoVest:render_ui_settings()
     imgui.DrawChild('Auto Vest',function(width)
         H.toggle('Automatically vest nearby players - /avest','auto_vest',_config.is_enabled,width)
+        imgui.Separator()
         H.bind('Aim and vest','aim_vest',_config.aim,width)
         imgui.Separator()
-        imgui.Text('Command mode');imgui.SameLine(width-250)
+        imgui.Text('Command mode - /avmode to swap between Normal and DD')
+        imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
         imgui.Text('Alliance skins to be vested');imgui.SameLine(width-290)
@@ -421,15 +417,18 @@ function AutoVest:render_ui_settings()
         imgui.SameLine(width-250)
         imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
         if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
+        imgui.Separator()
         imgui.Text('Vest interval (seconds)');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##vest_interval',_config.command_mode.intervals[_config.command_mode.current[0]])
         local interval=_config.command_mode.intervals[_config.command_mode.current[0]];interval[0]=math.max(1,interval[0])
+        imgui.Separator()
         imgui.Text('Offer if vest is below');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##offer_below',_config.offer_if_armor_below);_config.offer_if_armor_below[0]=math.max(0,math.min(100,_config.offer_if_armor_below[0]))
+        imgui.Separator()
         H.toggle('Show offered-to overlay','offered_to',_config.overlay.display,width)
     end)
     require('src.components.AcceptVest'):render_ui_settings()
-    H.position({_config.overlay},'vesting')
+    H.position({_config.overlay,require('src.components.AcceptVest'):get_overlay_config()},'vesting')
     Editor:render()
 end
 return AutoVest

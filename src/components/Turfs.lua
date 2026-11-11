@@ -440,10 +440,7 @@ function Turfs:render_ui_settings()
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##turfs_overlay_active_war", _config.overlay.display_war_information)
 
-    end)
-
-    imgui.Dummy(imgui.ImVec2(0, 5))
-    imgui.DrawChild("Capture##turfs", function(width)
+        imgui.Separator()
         imgui.Text("Automatically capture turfs as soon as they become available - /acapt")
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##turfs_auto_capture", _config.auto_capture)

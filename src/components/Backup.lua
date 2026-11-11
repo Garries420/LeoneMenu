@@ -31,7 +31,31 @@ default_data.bind={keys={}}
 local H=require('src.ui.Helpers')
 local shared=require('src.shared')
 local locations=require('src.core.CustomLocations')
+local Rules=require('src.core.Rules')
 local show_locations=false
+local backup_active=false
+local interior_labels,labels_scanned={},false
+local interior_game_text_until=0
+local function observe_label(id,text)
+    interior_labels[id]=type(text)=='string' and Rules.trim(Rules.strip(text)):upper()=='INTERIOR' or nil
+end
+local function interior_label_visible()
+    local can_read=sampTextdrawIsExists and sampTextdrawGetString
+    if not labels_scanned then
+        labels_scanned=true
+        -- A script reload can occur after the server has already shown the label.
+        if can_read then
+            for id=0,2047 do if sampTextdrawIsExists(id) then observe_label(id,sampTextdrawGetString(id)) end end
+        end
+    end
+    for id in pairs(interior_labels)do
+        if can_read then
+            if sampTextdrawIsExists(id) then observe_label(id,sampTextdrawGetString(id)) else interior_labels[id]=nil end
+        end
+        if interior_labels[id] then return true end
+    end
+    return os.clock()<interior_game_text_until
+end
 
 local _config = default_data
 
@@ -50,8 +74,18 @@ end
 
 function Backup:register()
     carboneum.load(CONFIG_PATH, _config)
+    shared.event_handler:register('SHOW_TEXTDRAW',function()return true end,function(id,data)observe_label(id,data.text)end)
+    shared.event_handler:register('TEXTDRAW_SET_STRING',function()return true end,observe_label)
+    shared.event_handler:register('HIDE_TEXTDRAW',function()return true end,function(id)interior_labels[id]=nil end)
+    shared.event_handler:register('DISPLAY_GAME_TEXT',function()return true end,function(_,time,text)
+        interior_game_text_until=Rules.trim(Rules.strip(text)):upper()=='INTERIOR' and os.clock()+time/1000 or 0
+    end)
 
     shared.hotkey_manager:register('faction_backup',_config.bind.keys,function()
+        local radio_only=interior_label_visible()
+        if backup_active and not radio_only then
+            sampSendChat('/nobackup');backup_active=false;return
+        end
         local x,y,z=getCharCoordinates(PLAYER_PED)
         local interior=getActiveInterior()
         local special=locations.find(x,y,z,interior)
@@ -72,6 +106,7 @@ function Backup:register()
             end
         end
         sampSendChat("/pr I need urgent backup, " .. wanted .. "Currently at " .. place .. ending)
+        if not radio_only then sampSendChat('/fbackup');backup_active=true end
     end)
     MainWindow:add_page("backup", {
         icon = fa("BULLHORN"),
@@ -119,6 +154,7 @@ function Backup:render_ui_settings()
         imgui.SameLine(width-180)
         local keys=shared.hotkey_manager:draw_key_editor('faction_backup',imgui.ImVec2(180,0))
         if keys then _config.bind.keys=keys end
+        imgui.Separator()
         H.toggle('Mention wanted level','backup_wanted',_config.wanted,width)
     end)
 

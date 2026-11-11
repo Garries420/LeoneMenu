@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.7")
+script_version("1.0.8")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -275,6 +275,14 @@ function sampev.onServerMessage(color, text)
     return shared.event_handler:process("SERVER_MESSAGE", color, text)
 end
 
+function sampev.onSendDeathNotification(reason,killer)
+    return shared.event_handler:process('LOCAL_DEATH',reason,killer)
+end
+
+function sampev.onSendTakeDamage(player,damage,weapon,bodypart)
+    return shared.event_handler:process('LOCAL_DAMAGE',player,damage,weapon,bodypart)
+end
+
 function sampev.onEditAttachedObject(index)
     return shared.event_handler:process("EDIT_ATTACHED_OBJECT", index)
 end
@@ -300,6 +308,14 @@ end
 
 function sampev.onToggleSelectTextDraw(state, hovercolor)
     return shared.event_handler:process("TOGGLE_SELECT_TEXTDRAW", state, hovercolor)
+end
+
+function sampev.onTextDrawHide(id)
+    return shared.event_handler:process('HIDE_TEXTDRAW',id)
+end
+
+function sampev.onTextDrawSetString(id,text)
+    return shared.event_handler:process('TEXTDRAW_SET_STRING',id,text)
 end
 
 function sampev.onCreate3DText(id, color, position, distance, testLOS, attachedPlayerId, attachedVehicleId, text)
@@ -355,7 +371,9 @@ function sampev.onSendCommand(cmd)
         _commands_state.is_cmd_self_sent[cmd_name] = true
     end
 
-    if _is_loading_interior then
+    -- Backup calls do not depend on streamed objects and must not wait for them.
+    local immediate_backup=cmd_name=='/pr' or cmd_name=='/fbackup' or cmd_name=='/nobackup'
+    if _is_loading_interior and not immediate_backup then
         lua_thread.create(function()
 
             while _is_loading_interior do

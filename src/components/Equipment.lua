@@ -173,13 +173,16 @@ function E:save_config() return Config.save(file,cfg) end
 function E:render_ui_settings()
     imgui.DrawChild('Blackmarket',function(width)
         imgui.Text('Select mode: /bms or /bms [Mode Number]')
+        imgui.Separator()
         H.toggle('Keybind enabled','bm_enabled',cfg.enabled,width)
+        imgui.Separator()
         H.bind('Keybind','blackmarket',cfg,width)
         imgui.Separator();imgui.Text('Keybind Modes:')
         for i,name in ipairs(names) do
             if cfg.mode[0]==i then imgui.TextColored(imgui.ImVec4(0,1,0,1),i..'. '..name) else imgui.Text(i..'. '..name) end
         end
         imgui.Separator();imgui.Text('Current Mode');imgui.SameLine(width-160);imgui.SetNextItemWidth(160);imgui.InputInt('##bm_mode',cfg.mode);cfg.mode[0]=math.max(1,math.min(4,cfg.mode[0]))
+        imgui.Separator()
         imgui.Text('Purchase gap (ms)');imgui.SameLine(width-160);imgui.SetNextItemWidth(160);imgui.InputInt('##bm_delay',cfg.delay);cfg.delay[0]=math.max(MIN_PURCHASE_GAP,math.min(5000,cfg.delay[0]))
     end)
 end

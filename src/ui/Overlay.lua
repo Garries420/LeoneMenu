@@ -41,6 +41,8 @@ function Overlay.setup_overlay_defaults(display, pos_x, pos_y, font_size, paddin
             y = imgui.new.float(pos_y or 0.5)
         },
         font_size = imgui.new.int(font_size or 20),
+        scale = imgui.new.float(1),
+        horizontal = imgui.new.bool(false),
         padding = imgui.new.int(padding or 4),
         border_thickness = imgui.new.int(border_thickness or 1),
         rounding = imgui.new.int(rounding or 8),
@@ -123,14 +125,16 @@ end
 
 function Overlay:TextOutline(text, thickness)
     local pos = imgui.GetCursorPos()
+    local scale=self.config.scale and self.config.scale[0] or 1
     for i = 1, thickness do
-        imgui.SetCursorPos(imgui.ImVec2(pos.x + i, pos.y))
+        local offset=i*scale
+        imgui.SetCursorPos(imgui.ImVec2(pos.x + offset, pos.y))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
-        imgui.SetCursorPos(imgui.ImVec2(pos.x - i, pos.y))
+        imgui.SetCursorPos(imgui.ImVec2(pos.x - offset, pos.y))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
-        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y + i))
+        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y + offset))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
-        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y - i))
+        imgui.SetCursorPos(imgui.ImVec2(pos.x, pos.y - offset))
         imgui.TextColored(imgui.ImVec4(0, 0, 0, 1), text)
     end
     imgui.SetCursorPos(pos)
@@ -169,7 +173,7 @@ function Overlay:TextRGB(text)
                 imgui.SameLine(nil, 0)
             end
 
-            imgui.PushFont(nil, cfg.font_size[0])
+            imgui.PushFont(nil, cfg.font_size[0]*(cfg.scale and cfg.scale[0] or 1))
             self:TextOutline(segment, 2)
             imgui.TextColored(current_color, segment)
             imgui.PopFont()
@@ -192,7 +196,7 @@ function Overlay:TextRGB(text)
             imgui.SameLine(nil, 0)
         end
 
-        imgui.PushFont(nil, cfg.font_size[0])
+        imgui.PushFont(nil, cfg.font_size[0]*(cfg.scale and cfg.scale[0] or 1))
         self:TextOutline(remaining, 1)
         imgui.TextColored(current_color, remaining)
         imgui.PopFont()
@@ -202,6 +206,7 @@ end
 function Overlay:render()
     local cfg = self.config
     if not cfg then return end
+    local scale=cfg.scale and cfg.scale[0] or 1
 
     -- Layout may read ImGui state only here, on the selected render context.
     local anchor, offset_y, offset_x
@@ -217,7 +222,7 @@ function Overlay:render()
     end
 
     cfg.padding_anchor=cfg.padding_anchor or cfg.padding[0]
-    local delta=cfg.padding[0]-cfg.padding_anchor
+    local delta=(cfg.padding[0]-cfg.padding_anchor)*scale
     pos_x=pos_x+(offset_x or 0)+(pivot.x==1 and delta or -delta)
     pos_y=pos_y-delta
     imgui.SetNextWindowPos(imgui.ImVec2(pos_x, pos_y), imgui.Cond.Always, pivot)
@@ -233,14 +238,14 @@ function Overlay:render()
     if cfg.border_render[0] and cfg.border_thickness[0] > 0 then
         imgui.PushStyleColor(imgui.Col.Border,
             imgui.ImVec4(cfg.border_color[0], cfg.border_color[1], cfg.border_color[2], cfg.border_color[3]))
-        imgui.PushStyleVar(imgui.StyleVar.WindowBorderSize, cfg.border_thickness[0])
+        imgui.PushStyleVar(imgui.StyleVar.WindowBorderSize, cfg.border_thickness[0]*scale)
     else
         imgui.PushStyleColor(imgui.Col.Border, imgui.ImVec4(0, 0, 0, 0))
         imgui.PushStyleVar(imgui.StyleVar.WindowBorderSize, 0)
     end
 
-    imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(cfg.padding[0], cfg.padding[0]))
-    imgui.PushStyleVar(imgui.StyleVar.WindowRounding, cfg.rounding[0])
+    imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(cfg.padding[0]*scale, cfg.padding[0]*scale))
+    imgui.PushStyleVar(imgui.StyleVar.WindowRounding, cfg.rounding[0]*scale)
 
     local window_name = "Overlay##" .. tostring(self)
     imgui.Begin(window_name, nil, OVERLAY_FLAGS)
@@ -251,6 +256,7 @@ function Overlay:render()
 
     self.last_width = imgui.GetWindowWidth()
     self.last_height = imgui.GetWindowHeight()
+    self.last_scale = scale
     imgui.End()
 
     imgui.PopStyleVar()
