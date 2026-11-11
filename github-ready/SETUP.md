@@ -21,7 +21,10 @@ The menu checks this feed on startup, on reload, hourly, and from Home.
 
 The in-game updater downloads only the Lua and installs it for the next GTA
 launch. Checks wait until the startup overlay finishes. The running Lua and
-renderer remain loaded until the player closes GTA. The generated Lua
+renderer remain loaded until the player closes GTA. A successful menu update
+shows a required OK dialog that explains the full restart. Reloading Lua scripts
+or reconnecting to the server without closing GTA does not follow the update path.
+The generated Lua
 checks the packaged library and resource files before normal startup. If the
 player needs the full package, it opens the required update dialog once for
 that package. The independent alliance HTML is excluded from the package
