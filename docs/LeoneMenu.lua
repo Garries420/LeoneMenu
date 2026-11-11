@@ -314,7 +314,7 @@ local COMMAND_MODE = {
 }
 local OFFER_REPLY_SECONDS=3
 
-local VESTER_MODE = { AUTOMATIC = 0, MANUAL = 1 }
+local VESTER_MODE = { AUTOMATIC = 0, MANUAL = 1, URL = 2 }
 
 local CONFIG_PATH = "config/Leone Menu/autovest.json"
 
@@ -400,6 +400,18 @@ local function _process_aim_request()
     sampSendChat(string.format('/guard %d 200',request.id))
 end
 
+local function matches_skin(skin)
+    local mode=_config.vester_mode[0]
+    if mode==VESTER_MODE.AUTOMATIC then return Updates.is_alliance(skin) end
+    if mode==VESTER_MODE.URL then return skin_feed.skins[skin]==true end
+    if mode==VESTER_MODE.MANUAL then
+        for _,group in ipairs(_config.groups) do
+            for _,id in ipairs(group.skins) do if id==skin then return true end end
+        end
+    end
+    return false
+end
+
 local function _find_closest_valid_player(attempt)
 
     if _aim_is_held() then
@@ -415,14 +427,7 @@ local function _find_closest_valid_player(attempt)
         if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player)
             or sampIsPlayerPaused(id) or isCharPlayingAnim(player,'KILL_Knife_Ped_Die') then return false end
 
-        local skin=getCharModel(player)
-        local match=_config.vester_mode[0]==VESTER_MODE.AUTOMATIC and Updates.is_alliance(skin)
-        if _config.vester_mode[0]==VESTER_MODE.MANUAL then
-            for _,group in ipairs(_config.groups) do
-                for _,v in ipairs(group.skins) do if v==skin then match=true end end
-            end
-        end
-        if not match and not skin_feed.skins[skin] then return false end
+        if not matches_skin(getCharModel(player)) then return false end
 
         local health=sampGetPlayerHealth(id)
         if health<=0 then return false end
@@ -650,8 +655,10 @@ function AutoVest:register()
         if connected then _auto_vest_state.aim_request={id=id,name=sampGetPlayerNickname(id)} end
     end)
     shared.event_handler:register('PED_TICK',function()return _auto_vest_state.aim_request~=nil end,_process_aim_request)
-    shared.event_handler:register('PED_TICK',function()return skin_feed.url~='' or skin_feed.request or _ui_state.save_url_at end,function()
-        skin_feed:tick()
+    shared.event_handler:register('PED_TICK',function()
+        return _ui_state.save_url_at or skin_feed.request or (_config.vester_mode[0]==VESTER_MODE.URL and skin_feed.url~='')
+    end,function()
+        skin_feed:tick(_config.vester_mode[0]==VESTER_MODE.URL)
         if _ui_state.save_url_at and os.clock()>=_ui_state.save_url_at then
             _ui_state.save_url_at=nil
             if not self:save_config() then _ui_state.save_url_at=os.clock()+5 end
@@ -703,9 +710,10 @@ function AutoVest:render_ui_settings()
         imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
-        local url_width=60
-        local mode_right=width-url_width-imgui.GetStyle().ItemSpacing.x
-        imgui.Text('Alliance skins to be vested');imgui.SameLine(mode_right-290)
+        local mode_width=315
+        imgui.Text('Alliance skins to be vested')
+        if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
+        imgui.SameLine(width-mode_width-40)
         if imgui.AnimButton(fa('GEAR')) then
             Editor:show(_config.groups,function(groups)
                 local previous=_config.groups
@@ -715,13 +723,12 @@ function AutoVest:render_ui_settings()
                 return false
             end)
         end
-        imgui.SameLine(mode_right-250)
-        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
-        if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
-        imgui.SameLine(width-url_width)
-        if imgui.AnimButton('URL',imgui.ImVec2(url_width,0)) then _ui_state.skin_url_open=not _ui_state.skin_url_open end
-        if imgui.IsItemHovered() then imgui.SetTooltip('Add a URL to an HTML skin list. Auto Vest will also vest players with those skin IDs.') end
-        if _ui_state.skin_url_open then
+        imgui.SameLine(width-mode_width)
+        local previous_mode=_config.vester_mode[0]
+        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual','URL'},_config.vester_mode,imgui.ImVec2(mode_width,0))
+        if imgui.IsItemHovered() then imgui.SetTooltip('URL mode vests only players whose skin IDs are in the linked HTML list.') end
+        if _config.vester_mode[0]~=previous_mode then self:save_config() end
+        if _config.vester_mode[0]==VESTER_MODE.URL then
             local url,changed=H.input('##vest_skin_url',_config.skin_url,'HTML url here...',imgui.GetContentRegionAvail().x,2048)
             if changed then
                 _config.skin_url=url
@@ -1306,6 +1313,7 @@ function E:register()
         end
         sampSendChat('/insurance '..n)
     end)
+    sampRegisterChatCommand('v',function() sampSendChat('/guardnear') end)
     local para=Overlay.setup_overlay_defaults(true,0.015,0.43,14,8,1,2,true,{0,0,0,0.75},true,{30/255,51/255,72/255,1})
     local loaded=Overlay.setup_overlay_defaults(true,0.015,0.50,17,10,1,6,true,{0.035,0.045,0.06,0.96},true,{30/255,51/255,72/255,1})
     Overlay.new(para,function() return os.clock()<state.para_until end,function(self) self:TextRGB('{FFFFFF}Parachute\navailable') end)
@@ -1370,6 +1378,7 @@ function E:render_random()
         imgui.Separator()
         imgui.Text('Shortcuts');imgui.Text('Sign check - /si')
         imgui.Text('Change insurance location - /ins')
+        imgui.Text('Guard nearby players quickly (guardnear) - /v')
     end)
 end
 function E:render_vehicles()
@@ -4595,9 +4604,9 @@ function Feed:set_url(value)
     self.status=url~='' and 'Waiting to load skin IDs...' or nil
 end
 
-function Feed:tick()
+function Feed:tick(active)
     if self.request and self.request:poll() then self.request=nil end
-    if self.request or self.url=='' or not self.next_check or os.clock()<self.next_check then return end
+    if not active or self.request or self.url=='' or not self.next_check or os.clock()<self.next_check then return end
 
     local url=self.url
     local target=url:gsub('#.*$','')
@@ -5854,7 +5863,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.1',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -6083,7 +6092,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.0")
+script_version("1.1.1")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -7881,7 +7890,8 @@ local sections={
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
         'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size','Reset size of lawyer cooldown overlay'},
-    {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Anti Spam','Sign check - /si','Change insurance location - /ins'},
+    {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Anti Spam','Sign check - /si','Change insurance location - /ins',
+        'Guard nearby players quickly (guardnear) - /v'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
@@ -10126,7 +10136,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.0", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.1", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
