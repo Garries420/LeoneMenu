@@ -30,7 +30,7 @@ function K:render_ui_settings()
     for i,b in ipairs(cfg.binds) do
         imgui.PushID(b.id)
         local width=imgui.GetContentRegionAvail().x
-        imgui.Text(b.command);imgui.SameLine(width-205-imgui.ToggleButtonWidth()-10)
+        imgui.TextUnformatted(b.command);imgui.SameLine(width-205-imgui.ToggleButtonWidth()-10)
         imgui.ToggleButton('##enabled',b.enabled);imgui.SameLine(width-205)
         local keys=shared.hotkey_manager:draw_key_editor('custom_'..b.id,imgui.ImVec2(155,0));if keys then b.keys=keys end
         imgui.SameLine(width-40)
@@ -40,10 +40,10 @@ function K:render_ui_settings()
     imgui.EndChild()
     if imgui.AnimButton('Add') then draft.command='';draft.keys={};shared.hotkey_manager.registered.custom_draft.keys={};imgui.OpenPopup('Add Keybind') end
     if imgui.BeginPopupModal('Add Keybind',nil,imgui.WindowFlags.AlwaysAutoResize) then
-        draft.command=H.input('##custom_command',draft.command,'/dance 1',350,128)
+        draft.command=H.input('##custom_command',draft.command,'Add your text here...',350,128)
         local keys=shared.hotkey_manager:draw_key_editor('custom_draft',imgui.ImVec2(180,0));if keys then draft.keys=keys end
         if imgui.AnimButton('Save') then
-            if not draft.command:match('^/%S+') or draft.command:find('[\r\n]') or #draft.keys==0 then msg('Enter a command beginning with / and choose a keybind.')
+            if not draft.command:find('%S') or draft.command:find('[\r\n]') or #draft.keys==0 then msg('Enter text or a command and choose a keybind.')
             else
                 shared.hotkey_manager.registered.custom_draft.keys={}
                 local b={id=cfg.next_id,command=draft.command,keys=draft.keys,enabled=imgui.new.bool(true)}
