@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.11")
+script_version("1.0.12")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
