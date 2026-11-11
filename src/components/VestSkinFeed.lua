@@ -16,9 +16,9 @@ function Feed:set_url(value)
     self.status=url~='' and 'Waiting to load skin IDs...' or nil
 end
 
-function Feed:tick()
+function Feed:tick(active)
     if self.request and self.request:poll() then self.request=nil end
-    if self.request or self.url=='' or not self.next_check or os.clock()<self.next_check then return end
+    if not active or self.request or self.url=='' or not self.next_check or os.clock()<self.next_check then return end
 
     local url=self.url
     local target=url:gsub('#.*$','')

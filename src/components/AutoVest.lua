@@ -24,7 +24,7 @@ local COMMAND_MODE = {
 }
 local OFFER_REPLY_SECONDS=3
 
-local VESTER_MODE = { AUTOMATIC = 0, MANUAL = 1 }
+local VESTER_MODE = { AUTOMATIC = 0, MANUAL = 1, URL = 2 }
 
 local CONFIG_PATH = "config/Leone Menu/autovest.json"
 
@@ -110,6 +110,18 @@ local function _process_aim_request()
     sampSendChat(string.format('/guard %d 200',request.id))
 end
 
+local function matches_skin(skin)
+    local mode=_config.vester_mode[0]
+    if mode==VESTER_MODE.AUTOMATIC then return Updates.is_alliance(skin) end
+    if mode==VESTER_MODE.URL then return skin_feed.skins[skin]==true end
+    if mode==VESTER_MODE.MANUAL then
+        for _,group in ipairs(_config.groups) do
+            for _,id in ipairs(group.skins) do if id==skin then return true end end
+        end
+    end
+    return false
+end
+
 local function _find_closest_valid_player(attempt)
 
     if _aim_is_held() then
@@ -125,14 +137,7 @@ local function _find_closest_valid_player(attempt)
         if (connected and id==local_id) or player==PLAYER_PED or not doesCharExist(player)
             or sampIsPlayerPaused(id) or isCharPlayingAnim(player,'KILL_Knife_Ped_Die') then return false end
 
-        local skin=getCharModel(player)
-        local match=_config.vester_mode[0]==VESTER_MODE.AUTOMATIC and Updates.is_alliance(skin)
-        if _config.vester_mode[0]==VESTER_MODE.MANUAL then
-            for _,group in ipairs(_config.groups) do
-                for _,v in ipairs(group.skins) do if v==skin then match=true end end
-            end
-        end
-        if not match and not skin_feed.skins[skin] then return false end
+        if not matches_skin(getCharModel(player)) then return false end
 
         local health=sampGetPlayerHealth(id)
         if health<=0 then return false end
@@ -360,8 +365,10 @@ function AutoVest:register()
         if connected then _auto_vest_state.aim_request={id=id,name=sampGetPlayerNickname(id)} end
     end)
     shared.event_handler:register('PED_TICK',function()return _auto_vest_state.aim_request~=nil end,_process_aim_request)
-    shared.event_handler:register('PED_TICK',function()return skin_feed.url~='' or skin_feed.request or _ui_state.save_url_at end,function()
-        skin_feed:tick()
+    shared.event_handler:register('PED_TICK',function()
+        return _ui_state.save_url_at or skin_feed.request or (_config.vester_mode[0]==VESTER_MODE.URL and skin_feed.url~='')
+    end,function()
+        skin_feed:tick(_config.vester_mode[0]==VESTER_MODE.URL)
         if _ui_state.save_url_at and os.clock()>=_ui_state.save_url_at then
             _ui_state.save_url_at=nil
             if not self:save_config() then _ui_state.save_url_at=os.clock()+5 end
@@ -413,9 +420,10 @@ function AutoVest:render_ui_settings()
         imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
-        local url_width=60
-        local mode_right=width-url_width-imgui.GetStyle().ItemSpacing.x
-        imgui.Text('Alliance skins to be vested');imgui.SameLine(mode_right-290)
+        local mode_width=315
+        imgui.Text('Alliance skins to be vested')
+        if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
+        imgui.SameLine(width-mode_width-40)
         if imgui.AnimButton(fa('GEAR')) then
             Editor:show(_config.groups,function(groups)
                 local previous=_config.groups
@@ -425,13 +433,12 @@ function AutoVest:render_ui_settings()
                 return false
             end)
         end
-        imgui.SameLine(mode_right-250)
-        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual'},_config.vester_mode,imgui.ImVec2(250,0))
-        if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
-        imgui.SameLine(width-url_width)
-        if imgui.AnimButton('URL',imgui.ImVec2(url_width,0)) then _ui_state.skin_url_open=not _ui_state.skin_url_open end
-        if imgui.IsItemHovered() then imgui.SetTooltip('Add a URL to an HTML skin list. Auto Vest will also vest players with those skin IDs.') end
-        if _ui_state.skin_url_open then
+        imgui.SameLine(width-mode_width)
+        local previous_mode=_config.vester_mode[0]
+        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual','URL'},_config.vester_mode,imgui.ImVec2(mode_width,0))
+        if imgui.IsItemHovered() then imgui.SetTooltip('URL mode vests only players whose skin IDs are in the linked HTML list.') end
+        if _config.vester_mode[0]~=previous_mode then self:save_config() end
+        if _config.vester_mode[0]==VESTER_MODE.URL then
             local url,changed=H.input('##vest_skin_url',_config.skin_url,'HTML url here...',imgui.GetContentRegionAvail().x,2048)
             if changed then
                 _config.skin_url=url
