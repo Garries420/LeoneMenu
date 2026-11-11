@@ -5552,7 +5552,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.0.8',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.0.9',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -5634,6 +5634,19 @@ local function install_staged()
     U.status='Leone Menu '..update.version..' installed. Restart GTA to apply the update.'
     print('[Leone Menu] '..U.status)
     msg(U.status)
+    require('src.ui.MainWindow'):hide()
+    require('src.ui.Dialogs').show('Leone Menu - Restart required',table.concat({
+        '{FFFFFF}Leone Menu {00FF00}'..update.version..'{FFFFFF} has finished installing.',
+        '',
+        '{FF0000}YOU MUST FULLY CLOSE AND REOPEN GTA.',
+        '{FFFFFF}Close GTA San Andreas, then launch SA-MP and reconnect.',
+        '',
+        '{FF0000}Reloading Lua scripts (CTRL + R) is NOT enough.',
+        '{FFFFFF}Disconnecting and reconnecting without closing GTA is NOT enough.',
+        '',
+        'The update will take effect after GTA has restarted.',
+        'Press OK to acknowledge.',
+    },'\n'),0,'OK',nil,true,nil,'update_restart_required')
 end
 
 function U.check_menu(manual)
@@ -5768,7 +5781,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.0.8")
+script_version("1.0.9")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -9796,7 +9809,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.0.8", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.0.9", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
