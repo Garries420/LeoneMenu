@@ -6,6 +6,7 @@ local imgui = require("upmimgui")
 local keys = require("game.keys")
 
 local Updates = require("src.core.Updates")
+local AllianceRoster = require("src.core.AllianceRoster")
 local skin_feed = require('src.components.VestSkinFeed').new()
 local H = require("src.ui.Helpers")
 local Rules = require("src.core.Rules")
@@ -310,6 +311,19 @@ local function _register_event_handlers()
     )
 end
 
+local function announce_mode()
+    local mode=_config.vester_mode[0]
+    if mode==VESTER_MODE.AUTOMATIC then
+        local names={}
+        for i,gang in ipairs(AllianceRoster) do
+            names[i]=('{%06X}%s'):format(gang.color,gang.short)
+        end
+        sampAddChatMessage('[Leone Menu] {FFFFFF}Vester Mode: Alliance - '..table.concat(names,', '),0xFF1E3348)
+    else
+        msg('Vester Mode: '..(mode==VESTER_MODE.URL and 'URL' or 'Manual'))
+    end
+end
+
 local function _register_commands()
     sampRegisterChatCommand(
         "avest",
@@ -317,6 +331,7 @@ local function _register_commands()
             _config.is_enabled[0] = not _config.is_enabled[0]
             msg(string.format("Auto Vest has been %s{FFFFFF}.",
                 _config.is_enabled[0] and "{00FF00}enabled" or "{FF0000}disabled"))
+            announce_mode()
         end
     )
 
@@ -330,7 +345,7 @@ local function _register_commands()
     sampRegisterChatCommand('ddmode',swap_mode)
 end
 
-local AutoVest = {}
+local AutoVest = {announce_mode=announce_mode}
 
 function AutoVest:get_pending_offer() return _auto_vest_state.pending end
 

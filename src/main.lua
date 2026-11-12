@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.4")
+script_version("1.1.5")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -600,7 +600,7 @@ function main()
 
     shared.event_handler:process("onScriptInit")
 
-    Extras:loaded()
+    Extras:loaded(AutoVest.announce_mode)
     local Updates=require("src.core.Updates")
     Updates.start()
     msg("Leone Menu loaded. Use {1E3348}/leone{FFFFFF}.")

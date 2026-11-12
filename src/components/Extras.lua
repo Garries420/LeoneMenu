@@ -76,7 +76,7 @@ function E:stop_startup_audio()
     state.audio=nil
     if stream then releaseAudioStream(stream) end
 end
-function E:loaded()
+function E:loaded(on_ready)
     lua_thread.create(function()
         while not startup_ready() do wait(100) end
         wait(1000)
@@ -85,6 +85,7 @@ function E:loaded()
         if not ok then print('[Leone Menu] Animation preload failed: '..tostring(err)) end
         Frequency:loaded()
         state.notice_ready=true
+        if on_ready then on_ready() end
         local ok,stream=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/modloadedin.mp3')
         if ok and stream and stream~=0 then
             state.audio=stream

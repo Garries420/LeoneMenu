@@ -2,7 +2,7 @@
 local S={}
 local sections={
     {'home','Credits','Sputnik credits','Kev and Futurestunt','Garry forum and Discord'},
-    {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision'},
+    {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision','Alliance skins included'},
     {'auto_vest','Auto Vest','Automatically vest nearby players - /avest','Aim and vest',
         'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
