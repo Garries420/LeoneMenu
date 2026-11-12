@@ -3,7 +3,7 @@
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.2")
+script_version("1.1.4")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -276,6 +276,10 @@ end
 function sampev.onServerMessage(color, text)
     local result=shared.event_handler:process("SERVER_MESSAGE",color,text)
     return ChatDedup.server(color,text,result)
+end
+
+function sampev.onInitGame()
+    shared.event_handler:process('SERVER_CONNECTED')
 end
 
 function sampev.onChatMessage(id,text)

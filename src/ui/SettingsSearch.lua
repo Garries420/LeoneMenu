@@ -34,7 +34,7 @@ local sections={
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
-    {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border'},
+    {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border','PEDS: text color','Number on the PEDS: text color','Sync text colors'},
     {'ped_counter','Style Properties##ped_counter','Font size','Padding','Border Thickness','Rounding'},
     {'capture','Turfs','Show upcoming turf war info','Show active turf war info',
         'Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
@@ -42,7 +42,8 @@ local sections={
     {'capture','Regroup checker','Checks the surrounding area for our own members','Quick usage - /rgcheck','RGCHECK'},
     {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of turf and point overlays'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
-    {'phone','SMS Players','Send SMS - /pm'}
+    {'phone','SMS Players','Send SMS - /pm'},
+    {'phone','Weapons','Aim and sell weapons - /sellgun','Auto accept weapons if offered at 1$ or 0$'}
 }
 function S.find(query,pages)
     local terms={}

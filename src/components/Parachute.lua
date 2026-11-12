@@ -153,7 +153,7 @@ function P:tick()
     if falling() then
         self.cycle_ready, self.selection = nil, nil
         if aircraft_exit then self.aircraft_exit_until = now + AIRCRAFT_EXIT_SECONDS end
-        if current ~= PARACHUTE then equip(PARACHUTE) end
+        -- Leave GTA's current selection alone while falling.
         return
     end
 

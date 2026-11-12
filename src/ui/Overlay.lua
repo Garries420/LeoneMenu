@@ -65,7 +65,7 @@ function Overlay.setup_overlay_defaults(display, pos_x, pos_y, font_size, paddin
     }
 end
 
-function Overlay.render_overlay_settings(config, prefix)
+function Overlay.render_overlay_settings(config, prefix, draw_extra_appearance)
     prefix = prefix or ""
     local cfg = config
 
@@ -95,6 +95,7 @@ function Overlay.render_overlay_settings(config, prefix)
         imgui.ToggleButton("border_render", cfg.border_render)
         imgui.SameLine(width - imgui.ToggleButtonWidth() - 34 - imgui.GetStyle().ItemSpacing.x)
         imgui.ColorEdit4("##border_color", cfg.border_color, imgui.ColorEditFlags.NoInputs)
+        if draw_extra_appearance then draw_extra_appearance(width) end
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))

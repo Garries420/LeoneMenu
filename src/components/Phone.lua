@@ -8,14 +8,16 @@ local H=require('src.ui.Helpers')
 local Player=require('src.utils.Player')
 local R=require('src.core.Rules')
 local shared=require('src.shared')
+local Weapons=require('src.components.WeaponOffers')
 local P={}
-local cfg={show_id=imgui.new.bool(true),colorize=imgui.new.bool(true),hide_extra=imgui.new.bool(true)}
+local cfg={show_id=imgui.new.bool(true),colorize=imgui.new.bool(true),hide_extra=imgui.new.bool(true),weapons=Weapons.defaults()}
 local pending
 local last_sms_at=-math.huge
 local function normalized(name) return name:lower():gsub(" ","_") end
 local function bad_player() msg("Player isn't logged in or ID/name is wrong, try again") end
 function P:register()
     Config.load('config/Leone Menu/phone.json',cfg)
+    Weapons:register(cfg.weapons,function() self:save_config() end)
     sampRegisterChatCommand('pm',function(args)
         local recipient,message=args:match('^(%S+)%s+(.+)$')
         if not recipient then return msg('USAGE: /pm [Player ID / Name] [Message]') end
@@ -79,7 +81,7 @@ function P:register()
     end)
     shared.event_handler:register('PED_TICK',function() return pending and os.clock()>pending.deadline end,function() pending=nil;msg('Phone lookup timed out. Please try again.') end)
     shared.event_handler:register('PLAYER_QUIT',function(id) return pending and pending.id==id end,function() pending=nil;bad_player() end)
-    require('src.ui.MainWindow'):add_page('phone',{title='Phone',icon=fa('MOBILE_SCREEN_BUTTON'),order=999,render_function=function() P:render_ui_settings() end})
+    require('src.ui.MainWindow'):add_page('phone',{title='Phone & Weapons',icon=fa('MOBILE_SCREEN_BUTTON'),order=999,render_function=function() P:render_ui_settings() end})
 end
 function P:save_config() return Config.save('config/Leone Menu/phone.json',cfg) end
 function P:render_ui_settings()
@@ -94,5 +96,6 @@ function P:render_ui_settings()
         imgui.Text('CMD: /pm [Player ID / Name] [Message]')
         imgui.TextWrapped("You can use part of the player's name. If several players match, the menu lists their names and IDs before sending anything.")
     end)
+    Weapons:render_ui_settings()
 end
 return P

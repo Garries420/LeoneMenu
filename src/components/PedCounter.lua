@@ -25,6 +25,9 @@ local default_data = {
     ),
 }
 default_data.overlay.display_outside_interiors = imgui.new.bool(true)
+default_data.overlay.label_color = imgui.new.float[4](30/255, 51/255, 72/255, 1)
+default_data.overlay.number_color = imgui.new.float[4](1, 1, 1, 1)
+default_data.overlay.sync_text_colors = imgui.new.bool(false)
 
 local _config = default_data
 
@@ -57,6 +60,35 @@ function PedCounter:save_config()
     return carboneum.save(CONFIG_PATH, _config)
 end
 
+local function draw_text_colors(width)
+    local cfg = _config.overlay
+    local color_x = width - imgui.GetFrameHeight()
+    local sync_width = 65
+    imgui.Separator()
+    imgui.AlignTextToFramePadding()
+    imgui.TextUnformatted("PEDS: text")
+    imgui.SameLine(color_x - sync_width - imgui.GetStyle().ItemSpacing.x)
+    local synced = cfg.sync_text_colors[0]
+    if synced then imgui.PushStyleColor(imgui.Col.Button, imgui.GetStyle().Colors[imgui.Col.ButtonActive]) end
+    if imgui.Button("Sync##ped_text_color", imgui.ImVec2(sync_width, 0)) then
+        cfg.sync_text_colors[0] = not synced
+        PedCounter:save_config()
+    end
+    if synced then imgui.PopStyleColor() end
+    if imgui.IsItemHovered() then imgui.SetTooltip("Apply the PEDS: text color to the number as well.") end
+    imgui.SameLine(color_x)
+    imgui.ColorEdit4("##ped_label_color", cfg.label_color, imgui.ColorEditFlags.NoInputs)
+
+    imgui.Separator()
+    imgui.AlignTextToFramePadding()
+    imgui.TextUnformatted("Number on the PEDS: text")
+    imgui.SameLine(color_x)
+    synced = cfg.sync_text_colors[0]
+    imgui.BeginDisabled(synced)
+    imgui.ColorEdit4("##ped_number_color", synced and cfg.label_color or cfg.number_color, imgui.ColorEditFlags.NoInputs)
+    imgui.EndDisabled()
+end
+
 function PedCounter:render_ui_settings()
     imgui.DrawChild("Ped Counter", function(width)
         imgui.Text("Show overlay with active ped slot count")
@@ -73,7 +105,7 @@ function PedCounter:render_ui_settings()
     end)
 
     if _config.overlay.display[0] then
-        Overlay.render_overlay_settings(_config.overlay, "ped_counter")
+        Overlay.render_overlay_settings(_config.overlay, "ped_counter", draw_text_colors)
     end
 end
 

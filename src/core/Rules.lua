@@ -35,10 +35,10 @@ function R.html_skins(html)
     return R.skins(content)
 end
 function R.frequency(text)
-    text=R.strip(text)
-    local body=text:match('Family MOTD:%s*(.+)')
+    local body=R.strip(text):match('^%s*Family MOTD:%s*(.+)')
     if not body then return nil end
-    local n=body:match('[Ff]:%s*(%-?%d+)') or body:match('^%s*(%-?%d+)')
+    local n=body:lower():match('%f[%a]f:%s*(%-?%d+)') or body:lower():match('%f[%a]freq:%s*(%-?%d+)')
+        or body:match('^%-?%d+')
     if n and #n:gsub('^-','')<=8 then return tonumber(n) end
 end
 function R.in_box(x,y,b)
