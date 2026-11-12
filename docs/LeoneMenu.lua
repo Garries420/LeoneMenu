@@ -296,6 +296,7 @@ local imgui = require("upmimgui")
 local keys = require("game.keys")
 
 local Updates = require("src.core.Updates")
+local AllianceRoster = require("src.core.AllianceRoster")
 local skin_feed = require('src.components.VestSkinFeed').new()
 local H = require("src.ui.Helpers")
 local Rules = require("src.core.Rules")
@@ -600,6 +601,19 @@ local function _register_event_handlers()
     )
 end
 
+local function announce_mode()
+    local mode=_config.vester_mode[0]
+    if mode==VESTER_MODE.AUTOMATIC then
+        local names={}
+        for i,gang in ipairs(AllianceRoster) do
+            names[i]=('{%06X}%s'):format(gang.color,gang.short)
+        end
+        sampAddChatMessage('[Leone Menu] {FFFFFF}Vester Mode: Alliance - '..table.concat(names,', '),0xFF1E3348)
+    else
+        msg('Vester Mode: '..(mode==VESTER_MODE.URL and 'URL' or 'Manual'))
+    end
+end
+
 local function _register_commands()
     sampRegisterChatCommand(
         "avest",
@@ -607,6 +621,7 @@ local function _register_commands()
             _config.is_enabled[0] = not _config.is_enabled[0]
             msg(string.format("Auto Vest has been %s{FFFFFF}.",
                 _config.is_enabled[0] and "{00FF00}enabled" or "{FF0000}disabled"))
+            announce_mode()
         end
     )
 
@@ -620,7 +635,7 @@ local function _register_commands()
     sampRegisterChatCommand('ddmode',swap_mode)
 end
 
-local AutoVest = {}
+local AutoVest = {announce_mode=announce_mode}
 
 function AutoVest:get_pending_offer() return _auto_vest_state.pending end
 
@@ -1342,7 +1357,7 @@ function E:stop_startup_audio()
     state.audio=nil
     if stream then releaseAudioStream(stream) end
 end
-function E:loaded()
+function E:loaded(on_ready)
     lua_thread.create(function()
         while not startup_ready() do wait(100) end
         wait(1000)
@@ -1351,6 +1366,7 @@ function E:loaded()
         if not ok then print('[Leone Menu] Animation preload failed: '..tostring(err)) end
         Frequency:loaded()
         state.notice_ready=true
+        if on_ready then on_ready() end
         local ok,stream=pcall(loadAudioStream,getWorkingDirectory()..'/resource/Leone Menu/modloadedin.mp3')
         if ok and stream and stream~=0 then
             state.audio=stream
@@ -1903,8 +1919,14 @@ local imgui=require('upmimgui')
 local fa=require('fAwesome7')
 local H=require('src.ui.Helpers')
 local U=require('src.core.Updates')
+local AllianceRoster=require('src.core.AllianceRoster')
 local MainWindow=require('src.ui.MainWindow')
 local Home={reload_requested=false,update_check_requested=false}
+local alliance_colors={}
+for i,gang in ipairs(AllianceRoster) do
+    local n=gang.color
+    alliance_colors[i]=imgui.ImVec4(math.floor(n/65536)/255,math.floor(n/256)%256/255,n%256/255,1)
+end
 function Home:register()
     MainWindow:add_page('home',{title='Home',icon=fa('HOUSE'),order=0,render_function=function()
         imgui.Heading('Leone Menu')
@@ -1927,6 +1949,12 @@ function Home:register()
         imgui.TextWrapped(U.skins_status)
         imgui.Text('Alliance Skin Date: '..(U.alliance.date or 'Unavailable'))
         if imgui.IsItemHovered() then imgui.SetTooltip('Day/Month/year - Swedish Timezone') end
+        imgui.TextUnformatted('Alliance skins included:')
+        for i,gang in ipairs(AllianceRoster) do
+            imgui.SameLine()
+            imgui.TextColored(alliance_colors[i],gang.short)
+            if imgui.IsItemHovered() then imgui.SetTooltip('%s',gang.name) end
+        end
     end})
     MainWindow:select_page('home')
 end
@@ -4950,6 +4978,17 @@ return W
 
 end
 
+package.preload['src.core.AllianceRoster'] = function()
+return {
+    {short='HCC', name='Hollow Carnival Circle', color=0xFDB3FF},
+    {short='GSH', name='Grove Street Hustlas', color=0x0D660B},
+    {short='HOM', name='House of Mercy', color=0xFFFFC1},
+    {short='Leone', name='Leone', color=0x2B4866},
+    {short='MVP', name='Magnolia Vigilance Protection', color=0x8A8E9C},
+}
+
+end
+
 package.preload['src.core.Colors'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\core\Colors.lua
 
@@ -6170,7 +6209,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.4',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.5',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -6399,7 +6438,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.4")
+script_version("1.1.5")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -6996,7 +7035,7 @@ function main()
 
     shared.event_handler:process("onScriptInit")
 
-    Extras:loaded()
+    Extras:loaded(AutoVest.announce_mode)
     local Updates=require("src.core.Updates")
     Updates.start()
     msg("Leone Menu loaded. Use {1E3348}/leone{FFFFFF}.")
@@ -8261,7 +8300,7 @@ package.preload['src.ui.SettingsSearch'] = function()
 local S={}
 local sections={
     {'home','Credits','Sputnik credits','Kev and Futurestunt','Garry forum and Discord'},
-    {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision'},
+    {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision','Alliance skins included'},
     {'auto_vest','Auto Vest','Automatically vest nearby players - /avest','Aim and vest',
         'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
@@ -10535,7 +10574,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.4", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.5", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
