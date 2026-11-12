@@ -1639,12 +1639,20 @@ return Fixes
 end
 
 package.preload['src.components.Frequency'] = function()
--- One /stats read on the first manual enable, then persisted frequency + MOTDs.
+-- One /stats read on the first manual enable, then use MOTDs and current-session radio confirmations.
 local R=require('src.core.Rules')
 local shared=require('src.shared')
 local F={}
 local cfg,save
 local s
+local LOGIN_SCANS={{delay=3000,rows=15},{delay=6000,rows=20}}
+local function reset_session()
+    local first_read_pending=s and s.first_read_pending
+    -- The saved frequency describes the previous session. Login may restore
+    -- a different frequency, so wait for this session's server messages.
+    s={enabled=cfg.auto_freq[0],first_read_pending=first_read_pending,
+       next_motd=os.clock()+300,motd_until=0,stats_until=0,stats_capture_until=0}
+end
 local function ready()
     return F.initialized and doesCharExist(PLAYER_PED) and sampIsLocalPlayerSpawned()
         and sampGetGamestate()==3 and not sampIsDialogActive() and not isPauseMenuActive()
@@ -1656,6 +1664,75 @@ end
 local function request_motd()
     s.motd_until=os.clock()+6;s.next_motd=os.clock()+300
     samp_send_hidden_command('fmotd')
+end
+local function observe_motd(freq,now)
+    s.login_attempt=nil
+    s.desired=freq;s.desired_at=now;s.need_apply=true
+    if cfg.auto_freq[0] then s.next_motd=now+300 end
+end
+
+local function read_chat_rows(limit)
+    local rows={}
+    -- SA-MP stores the newest line at index 99, including when chat is sparse.
+    for row=99,100-limit,-1 do
+        local ok,text,prefix=pcall(sampGetChatString,row)
+        if not ok then return end
+        rows[#rows+1]={text=text or '',prefix=prefix or ''}
+    end
+    return rows
+end
+
+local function same_row(a,b)
+    return a.text==b.text and a.prefix==b.prefix
+end
+
+local function find_login_motd(before,rows)
+    -- Match the newest pre-login rows to the older end of this scan.
+    -- The first overlap found is the longest and excludes the most old rows.
+    local new_count
+    for offset=0,#rows-1 do
+        local i=1
+        while offset+i<=#rows and same_row(before[i],rows[offset+i]) do i=i+1 end
+        if offset+i>#rows then new_count=offset;break end
+    end
+
+    for i=1,new_count or #rows do
+        local row=rows[i]
+        local freq=row.prefix=='' and R.frequency(row.text)
+        if freq then
+            if new_count then return freq end
+            -- Chat may have moved by more than the entire scan, or an old
+            -- line may have changed. Reject a candidate also in the snapshot.
+            local old=false
+            for _,prior in ipairs(before) do
+                if prior.prefix=='' and R.frequency(prior.text)==freq then old=true;break end
+            end
+            if not old then return freq end
+        end
+    end
+end
+
+local function start_login_scan(id)
+    local before=read_chat_rows(LOGIN_SCANS[#LOGIN_SCANS].rows)
+    if not before then return end
+    local attempt={}
+    s.login_attempt=attempt
+    lua_thread.create(function()
+        -- Both Enter and clicking Login send the dialog's affirmative response.
+        while s.login_attempt==attempt and sampIsDialogActive() and sampGetCurrentDialogId()==id do
+            wait(0)
+        end
+        for _,scan in ipairs(LOGIN_SCANS) do
+            if s.login_attempt~=attempt or not cfg.auto_freq[0] then return end
+            wait(scan.delay)
+            if s.login_attempt~=attempt or not cfg.auto_freq[0] then return end
+            local rows=read_chat_rows(scan.rows)
+            if not rows then break end
+            local freq=find_login_motd(before,rows)
+            if freq then observe_motd(freq,os.clock());return end
+        end
+        if s.login_attempt==attempt then s.login_attempt=nil end
+    end)
 end
 local function first_read()
     cfg.frequency_initialized=true;save()
@@ -1679,6 +1756,7 @@ function F:tick()
         else
             s.first_read_pending=false;s.stats_until=0;s.stats_capture_until=0
             s.motd_until=0;s.pending=nil;s.need_apply=false
+            s.login_attempt=nil
         end
     end
     if not enabled then return end
@@ -1704,9 +1782,21 @@ function F:tick()
 end
 function F:register(settings,on_save)
     cfg=settings;save=on_save
-    s={enabled=cfg.auto_freq[0],current=cfg.frequency_known and cfg.last_frequency or nil,
-       next_motd=os.clock()+300,motd_until=0,stats_until=0,stats_capture_until=0}
+    reset_session()
     self.initialized=false
+    shared.event_handler:register('SERVER_CONNECTED',function()return true end,reset_session)
+    shared.event_handler:register('SHOW_DIALOG',function(id,style,title,button)
+        return (style==2 or style==3) and R.trim(R.strip(title)):lower()=='login' and R.trim(R.strip(button)):lower()=='login'
+    end,function(id)
+        s.login_dialog=id
+        s.login_attempt=nil
+    end)
+    shared.event_handler:register('SEND_DIALOG_RESPONSE',function(id,button)
+        if id==s.login_dialog then return {id,button} end
+    end,function(id,button)
+        s.login_dialog=nil
+        if button==1 and cfg.auto_freq[0] and sampGetChatString then start_login_scan(id) end
+    end)
     shared.event_handler:register('SERVER_MESSAGE',function(color,text)return {color,text}end,function(color,text)
         local plain=R.strip(text);local now=os.clock()
         local confirmed=tonumber(plain:match('^You have set the frequency of your portable radio to (%-?%d+) kHz%.$'))
@@ -1733,9 +1823,8 @@ function F:register(settings,on_save)
         end
         local freq=R.frequency(plain)
         if freq then
-            s.desired=freq;s.desired_at=now;s.need_apply=true
+            observe_motd(freq,now)
             if cfg.auto_freq[0]then
-                s.next_motd=now+300
                 if now<s.motd_until then s.motd_until=0;return false end
             end
         end
@@ -3000,7 +3089,7 @@ function P:tick()
     if falling() then
         self.cycle_ready, self.selection = nil, nil
         if aircraft_exit then self.aircraft_exit_until = now + AIRCRAFT_EXIT_SECONDS end
-        if current ~= PARACHUTE then equip(PARACHUTE) end
+        -- Leave GTA's current selection alone while falling.
         return
     end
 
@@ -3081,6 +3170,9 @@ local default_data = {
     ),
 }
 default_data.overlay.display_outside_interiors = imgui.new.bool(true)
+default_data.overlay.label_color = imgui.new.float[4](30/255, 51/255, 72/255, 1)
+default_data.overlay.number_color = imgui.new.float[4](1, 1, 1, 1)
+default_data.overlay.sync_text_colors = imgui.new.bool(false)
 
 local _config = default_data
 
@@ -3113,6 +3205,35 @@ function PedCounter:save_config()
     return carboneum.save(CONFIG_PATH, _config)
 end
 
+local function draw_text_colors(width)
+    local cfg = _config.overlay
+    local color_x = width - imgui.GetFrameHeight()
+    local sync_width = 65
+    imgui.Separator()
+    imgui.AlignTextToFramePadding()
+    imgui.TextUnformatted("PEDS: text")
+    imgui.SameLine(color_x - sync_width - imgui.GetStyle().ItemSpacing.x)
+    local synced = cfg.sync_text_colors[0]
+    if synced then imgui.PushStyleColor(imgui.Col.Button, imgui.GetStyle().Colors[imgui.Col.ButtonActive]) end
+    if imgui.Button("Sync##ped_text_color", imgui.ImVec2(sync_width, 0)) then
+        cfg.sync_text_colors[0] = not synced
+        PedCounter:save_config()
+    end
+    if synced then imgui.PopStyleColor() end
+    if imgui.IsItemHovered() then imgui.SetTooltip("Apply the PEDS: text color to the number as well.") end
+    imgui.SameLine(color_x)
+    imgui.ColorEdit4("##ped_label_color", cfg.label_color, imgui.ColorEditFlags.NoInputs)
+
+    imgui.Separator()
+    imgui.AlignTextToFramePadding()
+    imgui.TextUnformatted("Number on the PEDS: text")
+    imgui.SameLine(color_x)
+    synced = cfg.sync_text_colors[0]
+    imgui.BeginDisabled(synced)
+    imgui.ColorEdit4("##ped_number_color", synced and cfg.label_color or cfg.number_color, imgui.ColorEditFlags.NoInputs)
+    imgui.EndDisabled()
+end
+
 function PedCounter:render_ui_settings()
     imgui.DrawChild("Ped Counter", function(width)
         imgui.Text("Show overlay with active ped slot count")
@@ -3129,7 +3250,7 @@ function PedCounter:render_ui_settings()
     end)
 
     if _config.overlay.display[0] then
-        Overlay.render_overlay_settings(_config.overlay, "ped_counter")
+        Overlay.render_overlay_settings(_config.overlay, "ped_counter", draw_text_colors)
     end
 end
 
@@ -3148,14 +3269,16 @@ local H=require('src.ui.Helpers')
 local Player=require('src.utils.Player')
 local R=require('src.core.Rules')
 local shared=require('src.shared')
+local Weapons=require('src.components.WeaponOffers')
 local P={}
-local cfg={show_id=imgui.new.bool(true),colorize=imgui.new.bool(true),hide_extra=imgui.new.bool(true)}
+local cfg={show_id=imgui.new.bool(true),colorize=imgui.new.bool(true),hide_extra=imgui.new.bool(true),weapons=Weapons.defaults()}
 local pending
 local last_sms_at=-math.huge
 local function normalized(name) return name:lower():gsub(" ","_") end
 local function bad_player() msg("Player isn't logged in or ID/name is wrong, try again") end
 function P:register()
     Config.load('config/Leone Menu/phone.json',cfg)
+    Weapons:register(cfg.weapons,function() self:save_config() end)
     sampRegisterChatCommand('pm',function(args)
         local recipient,message=args:match('^(%S+)%s+(.+)$')
         if not recipient then return msg('USAGE: /pm [Player ID / Name] [Message]') end
@@ -3219,7 +3342,7 @@ function P:register()
     end)
     shared.event_handler:register('PED_TICK',function() return pending and os.clock()>pending.deadline end,function() pending=nil;msg('Phone lookup timed out. Please try again.') end)
     shared.event_handler:register('PLAYER_QUIT',function(id) return pending and pending.id==id end,function() pending=nil;bad_player() end)
-    require('src.ui.MainWindow'):add_page('phone',{title='Phone',icon=fa('MOBILE_SCREEN_BUTTON'),order=999,render_function=function() P:render_ui_settings() end})
+    require('src.ui.MainWindow'):add_page('phone',{title='Phone & Weapons',icon=fa('MOBILE_SCREEN_BUTTON'),order=999,render_function=function() P:render_ui_settings() end})
 end
 function P:save_config() return Config.save('config/Leone Menu/phone.json',cfg) end
 function P:render_ui_settings()
@@ -3234,6 +3357,7 @@ function P:render_ui_settings()
         imgui.Text('CMD: /pm [Player ID / Name] [Message]')
         imgui.TextWrapped("You can use part of the player's name. If several players match, the menu lists their names and IDs before sending anything.")
     end)
+    Weapons:render_ui_settings()
 end
 return P
 
@@ -4672,6 +4796,160 @@ return Feed
 
 end
 
+package.preload['src.components.WeaponOffers'] = function()
+local imgui = require('upmimgui')
+local H = require('src.ui.Helpers')
+local Rules = require('src.core.Rules')
+local shared = require('src.shared')
+
+local W = {}
+local cfg, save
+
+-- MoonLoader slots are one-based. Melee, gifts and brass knuckles share a
+-- single ranking here, even though GTA stores them in different slots.
+local groups = {
+    {slots = {3}, weapons = {{'9mm', 22}, {'sdpistol', 23}, {'deagle', 24}}},
+    {slots = {4}, weapons = {{'shotgun', 25}, {'spas12', 27}}},
+    {slots = {5}, weapons = {{'tec9', 32}, {'uzi', 28}, {'mp5', 29}}},
+    {slots = {6}, weapons = {{'ak47', 30}, {'m4', 31}}},
+    {slots = {7}, weapons = {{'rifle', 33}, {'sniper', 34}}},
+    {slots = {1, 2, 11}, weapons = {
+        {'flowers', 14, 1}, {'cane', 15, 1}, {'shovel', 6, 1}, {'poolcue', 7, 1},
+        {'golfclub', 2, 1}, {'dildo', 10, 1, 11}, {'katana', 8, 1},
+        {'knuckles', 1, 2}, {'baseballbat', 5, 3},
+    }},
+}
+local by_name = {}
+for _, group in ipairs(groups) do
+    group.ranks = {}
+    for index, weapon in ipairs(group.weapons) do
+        local name, id, tier, alternate = unpack(weapon)
+        local rank = tier or index
+        by_name[name] = {group = group, rank = rank}
+        group.ranks[id] = rank
+        if alternate then group.ranks[alternate] = rank end
+    end
+end
+
+function W.defaults()
+    return {binds = {}, next_id = 1, auto_accept = imgui.new.bool(false)}
+end
+
+local function bind_name(row)
+    return 'sell_weapon_' .. row.id
+end
+
+local function register_bind(row)
+    local function sell()
+        local weapon = Rules.trim(row.weapon):lower()
+        if not by_name[weapon] then return end
+
+        local aimed, ped = getCharPlayerIsTargeting(PLAYER_HANDLE)
+        if not aimed or ped == PLAYER_PED or not doesCharExist(ped) then return end
+        local found, id = sampGetPlayerIdByCharHandle(ped)
+        if found and sampIsPlayerConnected(id) then
+            sampSendChat(('/sellgun %d %s 0'):format(id, weapon))
+        end
+    end
+
+    local hotkeys = shared.hotkey_manager
+    local name = bind_name(row)
+    if not hotkeys:register(name, row.keys, sell) then
+        row.keys = {}
+        hotkeys:register(name, row.keys, sell)
+    end
+end
+
+local function add_bind()
+    local row = {id = cfg.next_id, weapon = '', keys = {}}
+    cfg.next_id = row.id + 1
+    table.insert(cfg.binds, row)
+    register_bind(row)
+end
+
+local function accept_offer(_, text)
+    local name, price = Rules.strip(text):match(
+        '^%* Arms Dealer .- wants to sell you an? (.-) for %$(%d+), %(type /accept weapon%) to buy%.$')
+    if not name or tonumber(price) > 1 or not doesCharExist(PLAYER_PED) then return end
+    local offer = by_name[Rules.trim(name):lower()]
+    if not offer then return end
+
+    for _, slot in ipairs(offer.group.slots) do
+        local owned = getCharWeaponInSlot(PLAYER_PED, slot)
+        local rank = offer.group.ranks[owned]
+        if owned ~= 0 and (not rank or rank >= offer.rank) then return end
+    end
+    sampSendChat('/accept weapon')
+end
+
+function W:register(config, on_save)
+    cfg, save = config, on_save
+    for _, row in ipairs(cfg.binds) do
+        register_bind(row)
+        cfg.next_id = math.max(cfg.next_id, row.id + 1)
+    end
+    if #cfg.binds == 0 then add_bind() end
+    shared.event_handler:register('SERVER_MESSAGE', function() return cfg.auto_accept[0] end, accept_offer)
+end
+
+local function weapon_tooltip()
+    if not imgui.IsItemHovered() then return end
+    imgui.BeginTooltip()
+    imgui.TextUnformatted('Available weapon names')
+    imgui.Separator()
+    imgui.TextUnformatted('9mm, sdpistol, deagle, shotgun, spas12, mp5')
+    imgui.TextUnformatted('ak47, m4, rifle, sniper')
+    imgui.TextUnformatted('flowers, cane, shovel, poolcue, golfclub, dildo, katana')
+    imgui.TextUnformatted('knuckles, baseballbat')
+    local donor_color = imgui.ImVec4(183/255, 209/255, 235/255, 1)
+    imgui.TextColored(donor_color, 'uzi - Sapphire+ Donator only')
+    imgui.TextColored(donor_color, 'tec9 - Sapphire+ Donator only')
+    imgui.EndTooltip()
+end
+
+function W:render_ui_settings()
+    imgui.DrawChild('Weapons', function(width)
+        imgui.TextWrapped('type the weapons name you want to sell, add a keybind, and when you aim and click this keybind it will sell the weapon for 0$. + to add more and - to remove')
+        local height = imgui.GetFrameHeight()
+        local button = imgui.ImVec2(height, 0)
+        local key_size = imgui.ImVec2(180, 0)
+        local field_width = math.min(350, width - key_size.x - height - 2 * imgui.GetStyle().ItemSpacing.x)
+        local add, remove
+        for i, row in ipairs(cfg.binds) do
+            imgui.PushID(row.id)
+            row.weapon = H.input('##weapon_name', row.weapon, 'Weapon name', field_width, 32)
+            weapon_tooltip()
+            if imgui.IsItemDeactivatedAfterEdit() then save() end
+            imgui.SameLine()
+            local keys = shared.hotkey_manager:draw_key_editor(bind_name(row), key_size)
+            if keys then row.keys = keys; save() end
+            imgui.SameLine()
+            if i == 1 then
+                add = imgui.AnimButton('+##weapon_add', button)
+            elseif imgui.AnimButton('-##weapon_remove', button) then
+                remove = i
+            end
+            imgui.PopID()
+        end
+        if add then add_bind(); save() end
+        if remove then
+            local row = table.remove(cfg.binds, remove)
+            shared.hotkey_manager:unregister(bind_name(row))
+            save()
+        end
+        imgui.Separator()
+        local tip = "Only accepts if the weapon offered is better than yours, or you don't currently have that weapon on you"
+        if H.toggle('Auto accept weapons if offered at 1$ or 0$', 'weapon_auto_accept', cfg.auto_accept, width, tip) then
+            save()
+        end
+        if imgui.IsItemHovered() then imgui.SetTooltip(tip) end
+    end)
+end
+
+return W
+
+end
+
 package.preload['src.core.Colors'] = function()
 -- Module: F:\2025\EDrive\dev\luapack\src\core\Colors.lua
 
@@ -5459,10 +5737,10 @@ function R.html_skins(html)
     return R.skins(content)
 end
 function R.frequency(text)
-    text=R.strip(text)
-    local body=text:match('Family MOTD:%s*(.+)')
+    local body=R.strip(text):match('^%s*Family MOTD:%s*(.+)')
     if not body then return nil end
-    local n=body:match('[Ff]:%s*(%-?%d+)') or body:match('^%s*(%-?%d+)')
+    local n=body:lower():match('%f[%a]f:%s*(%-?%d+)') or body:lower():match('%f[%a]freq:%s*(%-?%d+)')
+        or body:match('^%-?%d+')
     if n and #n:gsub('^-','')<=8 then return tonumber(n) end
 end
 function R.in_box(x,y,b)
@@ -5892,7 +6170,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.2',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.4',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -6121,7 +6399,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.2")
+script_version("1.1.4")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -6394,6 +6672,10 @@ end
 function sampev.onServerMessage(color, text)
     local result=shared.event_handler:process("SERVER_MESSAGE",color,text)
     return ChatDedup.server(color,text,result)
+end
+
+function sampev.onInitGame()
+    shared.event_handler:process('SERVER_CONNECTED')
 end
 
 function sampev.onChatMessage(id,text)
@@ -6886,6 +7168,14 @@ package.preload['src.overlays.PedCounter'] = function()
 local Overlay = require("src.ui.Overlay")
 local PedCounter = require("src.components.PedCounter")
 
+local function color_byte(value)
+    return math.floor(math.max(0, math.min(1, value)) * 255 + 0.5)
+end
+
+local function color_tag(color)
+    return ("{%02X%02X%02X%02X}"):format(color_byte(color[0]), color_byte(color[1]), color_byte(color[2]), color_byte(color[3]))
+end
+
 local function create()
     local cfg = PedCounter:get_overlay_config()
 
@@ -6903,7 +7193,8 @@ local function create()
             return true
         end,
         function(self)
-            self:TextRGB("{1E3348}PEDS: {FFFFFF}" .. PedCounter:get_active_slots())
+            local number_color = cfg.sync_text_colors[0] and cfg.label_color or cfg.number_color
+            self:TextRGB(color_tag(cfg.label_color) .. "PEDS: " .. color_tag(number_color) .. PedCounter:get_active_slots())
         end
     )
 end
@@ -7683,7 +7974,7 @@ function Overlay.setup_overlay_defaults(display, pos_x, pos_y, font_size, paddin
     }
 end
 
-function Overlay.render_overlay_settings(config, prefix)
+function Overlay.render_overlay_settings(config, prefix, draw_extra_appearance)
     prefix = prefix or ""
     local cfg = config
 
@@ -7713,6 +8004,7 @@ function Overlay.render_overlay_settings(config, prefix)
         imgui.ToggleButton("border_render", cfg.border_render)
         imgui.SameLine(width - imgui.ToggleButtonWidth() - 34 - imgui.GetStyle().ItemSpacing.x)
         imgui.ColorEdit4("##border_color", cfg.border_color, imgui.ColorEditFlags.NoInputs)
+        if draw_extra_appearance then draw_extra_appearance(width) end
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))
@@ -8001,7 +8293,7 @@ local sections={
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
-    {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border'},
+    {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border','PEDS: text color','Number on the PEDS: text color','Sync text colors'},
     {'ped_counter','Style Properties##ped_counter','Font size','Padding','Border Thickness','Rounding'},
     {'capture','Turfs','Show upcoming turf war info','Show active turf war info',
         'Automatically capture turfs - /acapt','Run capture command periodically - /spamt','Capture spam interval'},
@@ -8009,7 +8301,8 @@ local sections={
     {'capture','Regroup checker','Checks the surrounding area for our own members','Quick usage - /rgcheck','RGCHECK'},
     {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of turf and point overlays'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
-    {'phone','SMS Players','Send SMS - /pm'}
+    {'phone','SMS Players','Send SMS - /pm'},
+    {'phone','Weapons','Aim and sell weapons - /sellgun','Auto accept weapons if offered at 1$ or 0$'}
 }
 function S.find(query,pages)
     local terms={}
@@ -10242,7 +10535,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.2", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.4", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
