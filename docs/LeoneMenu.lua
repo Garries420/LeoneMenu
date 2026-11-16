@@ -715,33 +715,39 @@ function AutoVest:save_config()
     return carboneum.save(CONFIG_PATH, _config)
 end
 
+local vest_mode_tips={
+    'This will vest the alliance skins added by Garries/Garry manually. If outdated, speak to him.',
+    'This allows you to edit the skins yourself. It unlocks a cogwheel that allows you to fully customize the skins you want it to vest.',
+    "If you're technical enough to know what an HTML URL is, you can add your HTML skins list here and it will choose those skin IDs.",
+}
+
 function AutoVest:render_ui_settings()
     imgui.DrawChild('Auto Vest',function(width)
         H.toggle('Automatically vest nearby players - /avest','auto_vest',_config.is_enabled,width)
         imgui.Separator()
         H.bind('Aim and vest','aim_vest',_config.aim,width)
         imgui.Separator()
-        imgui.Text('Command mode - /avmode to swap between Normal and DD')
+        imgui.Text('Command mode - /avmode or /ddmode to swap between Normal and DD')
         imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
         local mode_width=315
         imgui.Text('Alliance skins to be vested')
-        if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
-        imgui.SameLine(width-mode_width-40)
-        if imgui.AnimButton(fa('GEAR')) then
-            Editor:show(_config.groups,function(groups)
-                local previous=_config.groups
-                _config.groups=groups
-                if self:save_config() then return true end
-                _config.groups=previous
-                return false
-            end)
+        if _config.vester_mode[0]==VESTER_MODE.MANUAL then
+            imgui.SameLine(width-mode_width-40)
+            if imgui.AnimButton(fa('GEAR')) then
+                Editor:show(_config.groups,function(groups)
+                    local previous=_config.groups
+                    _config.groups=groups
+                    if self:save_config() then return true end
+                    _config.groups=previous
+                    return false
+                end)
+            end
         end
         imgui.SameLine(width-mode_width)
         local previous_mode=_config.vester_mode[0]
-        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual','URL'},_config.vester_mode,imgui.ImVec2(mode_width,0))
-        if imgui.IsItemHovered() then imgui.SetTooltip('URL mode vests only players whose skin IDs are in the linked HTML list.') end
+        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual','URL'},_config.vester_mode,imgui.ImVec2(mode_width,0),vest_mode_tips)
         if _config.vester_mode[0]~=previous_mode then self:save_config() end
         if _config.vester_mode[0]==VESTER_MODE.URL then
             local url,changed=H.input('##vest_skin_url',_config.skin_url,'HTML url here...',imgui.GetContentRegionAvail().x,2048)
@@ -807,6 +813,7 @@ local locations=require('src.core.CustomLocations')
 local Rules=require('src.core.Rules')
 local show_locations=false
 local backup_active=false
+local server_wanted_level
 local interior_labels,labels_scanned={},false
 local interior_game_text_until=0
 local function observe_label(id,text)
@@ -834,6 +841,17 @@ local _config = default_data
 
 local Backup = {}
 
+local function wanted_level(value)
+    if type(value)=='number' and value>=0 and value<=6 and value%1==0 then return value end
+end
+
+local function current_wanted_level()
+    if server_wanted_level~=nil then return server_wanted_level end
+    -- A reload may occur after the last wanted-level update from SA-MP.
+    local first, level=storeWantedLevel(PLAYER_HANDLE)
+    return wanted_level(level) or wanted_level(first)
+end
+
 function Backup:is_requesting(player_id)
     if not sampIsPlayerConnected(player_id) then
         return false
@@ -847,6 +865,13 @@ end
 
 function Backup:register()
     carboneum.load(CONFIG_PATH, _config)
+    shared.event_handler:register('SERVER_CONNECTED',function()return true end,function()
+        backup_active=false
+        server_wanted_level=nil
+    end)
+    shared.event_handler:register('SET_PLAYER_WANTED_LEVEL',function()return true end,function(level)
+        server_wanted_level=wanted_level(level)
+    end)
     shared.event_handler:register('SHOW_TEXTDRAW',function()return true end,function(id,data)observe_label(id,data.text)end)
     shared.event_handler:register('TEXTDRAW_SET_STRING',function()return true end,observe_label)
     shared.event_handler:register('HIDE_TEXTDRAW',function()return true end,function(id)interior_labels[id]=nil end)
@@ -871,9 +896,8 @@ function Backup:register()
         end
         local wanted, ending = "", ""
         if _config.wanted[0] then
-            -- MoonLoader opcode 01C0 returns a result flag before the level.
-            local _, stars = storeWantedLevel(PLAYER_HANDLE)
-            if type(stars) == "number" and stars >= 1 and stars <= 6 and stars % 1 == 0 then
+            local stars = current_wanted_level()
+            if stars and stars>0 then
                 wanted = ("Wanted with %d %s! "):format(stars, stars == 1 and "charge" or "charges")
                 ending = "!"
             end
@@ -921,7 +945,7 @@ function Backup:render_ui_settings()
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton('##show_active_backups',_config.overlay.display)
         imgui.Separator()
-        imgui.Text('Faction backup keybind')
+        imgui.Text('Gang backup keybind')
         imgui.SameLine(width-350)
         if imgui.AnimButton('All custom locations') then show_locations=true end
         imgui.SameLine(width-180)
@@ -1395,6 +1419,7 @@ function E:render_random()
         imgui.Text('Shortcuts');imgui.Text('Sign check - /si')
         imgui.Text('Change insurance location - /ins')
         imgui.Text('Guard nearby players quickly (guardnear) - /v')
+        imgui.Text('Quickly reconnect to the server - /recon')
     end)
 end
 function E:render_vehicles()
@@ -2395,6 +2420,8 @@ local Player = require("src.utils.Player")
 local shared = require("src.shared")
 local Rules = require('src.core.Rules')
 local FriskWarning = require('src.components.FriskWarning')
+local WeaponOffers = require('src.components.WeaponOffers')
+local H = require('src.ui.Helpers')
 
 local SPRUNK_WAIT_TIME = 0.050
 local SPECIAL_ACTION_DRINK_SPRUNK = 23
@@ -2402,6 +2429,8 @@ local SPECIAL_ACTION_DRINK_SPRUNK = 23
 local CONFIG_PATH = "config/Leone Menu/miscellaneous.json"
 
 local default_data = {
+    colorize_global = imgui.new.bool(false),
+    paycheck_drops = WeaponOffers.drop_defaults(),
     font = {
         path = ""
     },
@@ -2507,23 +2536,61 @@ local function get_system_fonts()
     return found
 end
 
+local reconnect_request, retried_nickname
 local function _force_recon(delay)
-    delay = delay or 0
-
-    sampSetGamestate(5)
-
-    local bs = raknetNewBitStream()
-    raknetEmulRpcReceiveBitStream(40, bs)
-    raknetDeleteBitStream(bs)
-
-    if sampIsDialogActive() then
-        sampCloseCurrentDialogWithButton(0)
-    end
-
+    local address,port=sampGetCurrentServerAddress()
+    if not address or address=='' or not port or port==0 then return false end
+    local request={}
+    reconnect_request=request
     lua_thread.create(function()
         wait(delay * 1000)
-        sampSetGamestate(1)
+        if reconnect_request~=request then return end
+        reconnect_request=nil
+        sampConnectToServer(address,port)
     end)
+    return true
+end
+
+local function retry_rejected_nickname()
+    if retried_nickname or reconnect_request then return end
+    if _force_recon(0) then
+        retried_nickname=true
+        msg('Reconnecting...')
+    end
+end
+
+local global_ranks={
+    {'Ruby Donator','DA2A1F'},{'Sapphire Donator','2C7DE3'},{'Diamond Donator','00ABDA'},
+    {'Junior Admin','00FF00'},{'General Admin','FDEE00'},{'Senior Admin','FFAA65'},{'Head Admin','D5010B'},
+    {'Asst.Management','910055'},{'Asst.Manager','910055'},{'Asst. Management','910055'},{'Asst. Manager','910055'},
+    {'Management','AE00A8'},{'Manager','AE00A8'},
+    {'Junior Helper','33CCFF'},{'Senior Helper','33CCFF'},{'Head Helper','33CCFF'},
+}
+
+local function colorize_global_rank(text,color)
+    local restore=string.format('{%06X}',bit.rshift(color,8))
+    local position=1
+    local function skip_colors()
+        while true do
+            local after=text:match('^({%x%x%x%x%x%x})()',position)
+            if not after then return end
+            restore=after
+            position=position+#after
+        end
+    end
+    skip_colors()
+    position=text:match('^%(%(%s+()',position)
+    if not position or not Rules.strip(text):match('%s+%)%)%s*$') then return text end
+    skip_colors()
+    local heading=text:sub(position):match('^(.-): ')
+    if not heading then return text end
+    for _,rank in ipairs(global_ranks) do
+        local label,hex=rank[1],rank[2]
+        if heading:sub(1,#label+1)==label..' ' and heading:sub(#label+2):match('%S') then
+            return text:sub(1,position-1)..'{'..hex..'}'..label..restore..text:sub(position+#label)
+        end
+    end
+    return text
 end
 
 local function resolve_beacons_in_text(text, color)
@@ -2682,6 +2749,7 @@ local function _register_event_handlers()
                 local normal_color = last_hex_color or string.format("{%06X}", bit.rshift(color, 8))
                 updated = resolve_beacons_in_text(updated, normal_color)
             end
+            if _config.colorize_global[0] then updated=colorize_global_rank(updated,color) end
             if updated~=text then return { color, updated } end
         end
     )
@@ -2751,9 +2819,10 @@ local function _register_commands()
     sampRegisterChatCommand(
         "recon",
         function(args)
-            local delay = tonumber(args) or 0
+            local delay = math.max(0,tonumber(args) or 0)
 
-            _force_recon(delay)
+            retried_nickname=false
+            if not _force_recon(delay) then return msg('No current server to reconnect to.') end
 
             local msg_text = delay == 0 and "Reconnecting..." or
                 "Reconnecting in " .. delay .. " second" .. (delay == 1 and "..." or "s...")
@@ -2773,7 +2842,8 @@ local function _register_commands()
             end
 
             sampSetLocalPlayerName(args)
-            _force_recon(0)
+            retried_nickname=false
+            if not _force_recon(0) then return msg('No current server to reconnect to.') end
             msg("Reconnecting with the name '" .. args .. "'.")
         end
     )
@@ -2827,6 +2897,15 @@ function Misc:register()
     end
 
     _register_event_handlers()
+    shared.event_handler:register('CONNECTION_REJECTED',function(reason)return reason==2 end,retry_rejected_nickname)
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
+        return Rules.trim(Rules.strip(text)):lower():match('^connection rejected: unacceptable nickname[%s%.]*$')~=nil
+    end,retry_rejected_nickname)
+    shared.event_handler:register('SERVER_CONNECTED',function()return true end,function()
+        retried_nickname=false
+        reconnect_request=nil
+    end)
+    WeaponOffers.register_paycheck_drop(_config.paycheck_drops)
     _register_commands()
     FriskWarning.register(_config.sniper_frisk_sound.enabled)
 
@@ -2933,10 +3012,14 @@ function Misc:render_ui_settings()
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))
-    imgui.DrawChild("Beacon Resolver", function(width)
+    imgui.DrawChild("Names & Colors", function(width)
         imgui.Text('Resolve player IDs when written as "B20" to their actual name instead')
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##beacon_resolver", _config.beacon_resolver.enabled)
+        imgui.Separator()
+        if H.toggle('Colorize admin/donator status in Global Chat (/g)','global_rank_colors',_config.colorize_global,width) then
+            Misc:save_config()
+        end
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))
@@ -2955,6 +3038,7 @@ function Misc:render_ui_settings()
     imgui.Dummy(imgui.ImVec2(0, 5))
     require("src.components.Extras"):render_random()
     require("src.components.Extras"):render_vehicles()
+    WeaponOffers.render_paycheck_drop(_config.paycheck_drops,function() self:save_config() end)
 end
 
 return Misc
@@ -4848,15 +4932,27 @@ local groups = {
     }},
 }
 local by_name = {}
+local weapon_names = {}
 for _, group in ipairs(groups) do
     group.ranks = {}
     for index, weapon in ipairs(group.weapons) do
         local name, id, tier, alternate = unpack(weapon)
         local rank = tier or index
         by_name[name] = {group = group, rank = rank}
+        weapon_names[#weapon_names+1]=name
         group.ranks[id] = rank
         if alternate then group.ranks[alternate] = rank end
     end
+end
+
+local drop_names={'sdpistol','9mm','shotgun','mp5','uzi','tec9','rifle','m4','ak47'}
+local aliases={['colt45']='9mm', ['silencedpistol']='sdpistol', ['silencepistol']='sdpistol',
+    ['countyrifle']='rifle', ['countryrifle']='rifle', ['combatshotgun']='spas12', ['sniperrifle']='sniper',
+    ['deserteagle']='deagle'}
+
+local function weapon_name(text)
+    local key=Rules.trim(text):lower():gsub('[%s%-]','')
+    return aliases[key] or (by_name[key] and key)
 end
 
 function W.defaults()
@@ -4869,8 +4965,12 @@ end
 
 local function register_bind(row)
     local function sell()
-        local weapon = Rules.trim(row.weapon):lower()
-        if not by_name[weapon] then return end
+        local weapon = weapon_name(row.weapon)
+        if not weapon then return end
+        if row.self_craft then
+            sampSendChat('/makegun '..weapon)
+            return
+        end
 
         local aimed, ped = getCharPlayerIsTargeting(PLAYER_HANDLE)
         if not aimed or ped == PLAYER_PED or not doesCharExist(ped) then return end
@@ -4888,8 +4988,8 @@ local function register_bind(row)
     end
 end
 
-local function add_bind()
-    local row = {id = cfg.next_id, weapon = '', keys = {}}
+local function add_bind(self_craft)
+    local row = {id = cfg.next_id, weapon = '', keys = {}, self_craft = self_craft}
     cfg.next_id = row.id + 1
     table.insert(cfg.binds, row)
     register_bind(row)
@@ -4913,6 +5013,7 @@ end
 function W:register(config, on_save)
     cfg, save = config, on_save
     for _, row in ipairs(cfg.binds) do
+        row.weapon=weapon_name(row.weapon) or row.weapon
         register_bind(row)
         cfg.next_id = math.max(cfg.next_id, row.id + 1)
     end
@@ -4920,46 +5021,115 @@ function W:register(config, on_save)
     shared.event_handler:register('SERVER_MESSAGE', function() return cfg.auto_accept[0] end, accept_offer)
 end
 
-local function weapon_tooltip()
-    if not imgui.IsItemHovered() then return end
-    imgui.BeginTooltip()
-    imgui.TextUnformatted('Available weapon names')
-    imgui.Separator()
-    imgui.TextUnformatted('9mm, sdpistol, deagle, shotgun, spas12, mp5')
-    imgui.TextUnformatted('ak47, m4, rifle, sniper')
-    imgui.TextUnformatted('flowers, cane, shovel, poolcue, golfclub, dildo, katana')
-    imgui.TextUnformatted('knuckles, baseballbat')
-    local donor_color = imgui.ImVec4(183/255, 209/255, 235/255, 1)
-    imgui.TextColored(donor_color, 'uzi - Sapphire+ Donator only')
-    imgui.TextColored(donor_color, 'tec9 - Sapphire+ Donator only')
-    imgui.EndTooltip()
+local function weapon_label(name)
+    return (name=='uzi' or name=='tec9') and (name..' - Sapphire+') or name
+end
+
+local function weapon_selector(row, width, craft_color)
+    local selected=weapon_name(row.weapon)
+    if row.self_craft then
+        imgui.PushStyleColor(imgui.Col.FrameBg,craft_color)
+        imgui.PushStyleColor(imgui.Col.FrameBgHovered,craft_color)
+        imgui.PushStyleColor(imgui.Col.PopupBg,craft_color)
+    end
+    imgui.SetNextItemWidth(width)
+    if imgui.BeginCombo('##weapon_name',selected and weapon_label(selected) or 'Select a weapon') then
+        for _,name in ipairs(weapon_names) do
+            local sapphire=name=='uzi' or name=='tec9'
+            if sapphire then imgui.PushStyleColor(imgui.Col.Text,imgui.ImVec4(183/255,209/255,235/255,1)) end
+            if imgui.Selectable(weapon_label(name),name==selected) then
+                row.weapon=name
+                save()
+            end
+            if sapphire then imgui.PopStyleColor() end
+            if name==selected then imgui.SetItemDefaultFocus() end
+        end
+        imgui.EndCombo()
+    end
+    if row.self_craft then imgui.PopStyleColor(3) end
+end
+
+function W.drop_defaults()
+    local choices={}
+    for _,name in ipairs(drop_names) do choices[name]=imgui.new.bool(false) end
+    return {enabled=imgui.new.bool(false),choices=choices}
+end
+
+function W.register_paycheck_drop(config)
+    local pending={}
+    shared.event_handler:register('SERVER_CONNECTED',function()return true end,function() pending={} end)
+    shared.event_handler:register('SERVER_MESSAGE',function()return config.enabled[0] end,function(_,text)
+        local tier,gift=Rules.trim(Rules.strip(text)):lower():match('^(%a+) donator gift:%s*(.+)$')
+        if tier~='diamond' and tier~='sapphire' and tier~='ruby' then return end
+        local name=weapon_name(gift)
+        if name and config.choices[name] and config.choices[name][0] and not pending[name] then
+            local current=pending
+            current[name]=true
+            lua_thread.create(function()
+                wait(100) -- Let SA-MP apply the paycheck's weapon grant before sending the command.
+                if current~=pending then return end
+                pending[name]=nil
+                if config.enabled[0] and config.choices[name][0] and sampGetGamestate()==3 and sampIsLocalPlayerSpawned() then
+                    sampSendChat('/dropgun '..name)
+                end
+            end)
+        end
+    end)
+end
+
+function W.render_paycheck_drop(config,on_save)
+    imgui.DrawChild('Paycheck Weapons',function(width)
+        imgui.Text('Automatically drop bad weapons on paycheck')
+        local toggle_width=imgui.ToggleButtonWidth()
+        if config.enabled[0] then
+            imgui.SameLine(width-toggle_width-86-imgui.GetStyle().ItemSpacing.x)
+            local opened=imgui.AnimButton('Config##paycheck_weapons',imgui.ImVec2(86,0))
+            local anchor=imgui.GetItemRectMin()
+            if imgui.IsItemHovered() then imgui.SetTooltip('The weapons you tick here will be dropped on a paycheck.') end
+            if opened then imgui.OpenPopup('paycheck_weapon_choices') end
+            imgui.SetNextWindowPos(anchor,imgui.Cond.Appearing,imgui.ImVec2(0,1))
+            if imgui.BeginPopup('paycheck_weapon_choices') then
+                for _,name in ipairs(drop_names) do
+                    if imgui.Checkbox(name,config.choices[name]) then on_save() end
+                end
+                imgui.EndPopup()
+            end
+        end
+        imgui.SameLine(width-toggle_width)
+        if imgui.ToggleButton('##paycheck_drop',config.enabled) then on_save() end
+    end)
 end
 
 function W:render_ui_settings()
     imgui.DrawChild('Weapons', function(width)
-        imgui.TextWrapped('type the weapons name you want to sell, add a keybind, and when you aim and click this keybind it will sell the weapon for 0$. + to add more and - to remove')
+        imgui.TextWrapped('Select a weapon and assign a keybind. Aim at a player to sell for $0, or add a self-craft bind to use /makegun.')
         local height = imgui.GetFrameHeight()
         local button = imgui.ImVec2(height, 0)
         local key_size = imgui.ImVec2(180, 0)
-        local field_width = math.min(350, width - key_size.x - height - 2 * imgui.GetStyle().ItemSpacing.x)
+        local field_width = math.max(70,math.min(350, width - key_size.x - 2 * height - 3 * imgui.GetStyle().ItemSpacing.x))
+        local craft_color=imgui.ImVec4(0.26,0.20,0.36,1)
         local add, remove
         for i, row in ipairs(cfg.binds) do
             imgui.PushID(row.id)
-            row.weapon = H.input('##weapon_name', row.weapon, 'Weapon name', field_width, 32)
-            weapon_tooltip()
-            if imgui.IsItemDeactivatedAfterEdit() then save() end
+            weapon_selector(row,field_width,craft_color)
             imgui.SameLine()
             local keys = shared.hotkey_manager:draw_key_editor(bind_name(row), key_size)
             if keys then row.keys = keys; save() end
             imgui.SameLine()
             if i == 1 then
-                add = imgui.AnimButton('+##weapon_add', button)
+                if imgui.AnimButton('+##weapon_add', button) then add='sell' end
+                if imgui.IsItemHovered() then imgui.SetTooltip('click this to add a new weapon to sell to someone else') end
+                imgui.SameLine()
+                imgui.PushStyleColor(imgui.Col.Button,craft_color)
+                if imgui.AnimButton('+##weapon_craft_add', button) then add='craft' end
+                imgui.PopStyleColor()
+                if imgui.IsItemHovered() then imgui.SetTooltip('click this to add a new weapon that you sell to yourself') end
             elseif imgui.AnimButton('-##weapon_remove', button) then
                 remove = i
             end
             imgui.PopID()
         end
-        if add then add_bind(); save() end
+        if add then add_bind(add=='craft'); save() end
         if remove then
             local row = table.remove(cfg.binds, remove)
             shared.hotkey_manager:unregister(bind_name(row))
@@ -5403,8 +5573,6 @@ local function _confirm_edit(self)
 end
 
 local function _handle_edit_key_down(self,key)
-    if key==vk.VK_ESCAPE then _cancel_edit(self);self.ui_release=true;return end
-    if key==vk.VK_BACK then self.edit_recorded={};_confirm_edit(self);self.ui_release=true;return end
     -- Capture only keys that overlap physically; release commits immediately.
     if #self.edit_recorded==0 then
         for _,mod in ipairs({vk.VK_LCONTROL,vk.VK_RCONTROL,vk.VK_LSHIFT,vk.VK_RSHIFT,vk.VK_LMENU,vk.VK_RMENU}) do
@@ -5415,6 +5583,14 @@ local function _handle_edit_key_down(self,key)
     end
     for _,k in ipairs(self.edit_recorded) do if k==key then return end end
     if #self.edit_recorded<self.MAX_COMBO then self.edit_recorded[#self.edit_recorded+1]=key end
+end
+
+local function clear_key(key)
+    return key==vk.VK_ESCAPE or key==vk.VK_BACK or key==vk.VK_DELETE
+end
+
+function HotkeyManager:claims_escape()
+    return self.cleared_key==vk.VK_ESCAPE or self.edit_target~=nil or self.hovered_editor~=nil
 end
 
 local function _try_execute_hotkeys(self)
@@ -5455,9 +5631,13 @@ local function _on_window_message(self, msg, wparam, lparam)
         self.edit_mode = false
         self.edit_target = nil
         self.edit_recorded = {}
+        self.hovered_editor = nil
+        self.cleared_key = nil
 
         return
     end
+
+    if msg==wm.WM_MOUSEMOVE then self.hovered_editor=nil;return end
 
     local mouse_down = {[0x201]=1,[0x204]=2,[0x207]=4}
     local mouse_up = {[0x202]=1,[0x205]=2,[0x208]=4}
@@ -5470,6 +5650,21 @@ local function _on_window_message(self, msg, wparam, lparam)
     local key = mouse_key or _get_modifier_key(wparam, lparam)
 
     if is_down then
+        if clear_key(key) and (self.edit_target or self.hovered_editor or self.cleared_key==key) then
+            local hotkey=self.registered[self.edit_target or self.hovered_editor]
+            if hotkey then
+                hotkey.keys={}
+                hotkey.new_keys=hotkey.keys
+                self.edit_mode=false
+                self.edit_target=nil
+                self.edit_recorded={}
+                self.pressed={}
+                self.ui_release=true
+            end
+            self.cleared_key=key
+            consumeWindowMessage(true,true)
+            return
+        end
         if not self.pressed[key] then
             self.pressed[key] = true
             if self.edit_mode then
@@ -5480,6 +5675,11 @@ local function _on_window_message(self, msg, wparam, lparam)
             end
         end
     else
+        if self.cleared_key==key then
+            self.cleared_key=nil
+            consumeWindowMessage(true,true)
+            return
+        end
         local recording=self.edit_mode
         if recording then
             for _,k in ipairs(self.edit_recorded) do
@@ -5659,6 +5859,7 @@ function HotkeyManager:draw_key_editor(name, size)
     if imgui.AnimButton(fa("KEYBOARD") .. " " .. text .. "##" .. name, size) then
         self:start_editing(name)
     end
+    if imgui.IsItemHovered() then self.hovered_editor=name end
 
     if hotkey.new_keys then
         local nk = hotkey.new_keys
@@ -6209,14 +6410,14 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.5',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.6',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
 local staged,completed,http_request
 local startup_checked,manual_queued,manual_skins=false,false,false
 local next_skins_at=0
-local initial={68,94,62,221,214,229,234,235,261,272,43,91,132,137,209,212,230,236,24,25,124,69,164,202,107,195,270,269,271,106}
+local initial={68,94,62,221,214,229,234,235,261,272,43,91,76,132,137,209,212,230,236,24,25,124,69,164,202,107,195,270,269,271,106}
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end
@@ -6438,7 +6639,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.5")
+script_version("1.1.6")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -6715,6 +6916,14 @@ end
 
 function sampev.onInitGame()
     shared.event_handler:process('SERVER_CONNECTED')
+end
+
+function sampev.onSetPlayerWantedLevel(level)
+    shared.event_handler:process('SET_PLAYER_WANTED_LEVEL',level)
+end
+
+function sampev.onConnectionRejected(reason)
+    shared.event_handler:process('CONNECTION_REJECTED',reason)
 end
 
 function sampev.onChatMessage(id,text)
@@ -7838,7 +8047,9 @@ local function _render_content()
 end
 
 local function _render_window()
-    require("src.shared").hotkey_manager:flush_ui_input()
+    local hotkeys=require("src.shared").hotkey_manager
+    hotkeys.hovered_editor=nil
+    hotkeys:flush_ui_input()
     local display = imgui.GetIO().DisplaySize
     local style = imgui.GetStyle()
     local sidebar_width = imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH)
@@ -7865,6 +8076,7 @@ local function _register()
 
     addEventHandler("onWindowMessage", function(msg, wparam)
         if msg == 0x0100 and wparam == vk.VK_ESCAPE and _main_window.is_open[0] then
+            if require("src.shared").hotkey_manager:claims_escape() then return end
             if _main_window.query~='' then
                 _main_window.query=''
             else
@@ -7927,6 +8139,7 @@ end
 
 function MainWindow:hide(persist)
     _main_window.is_open[0] = false
+    require('src.shared').hotkey_manager.hovered_editor=nil
     if persist~=false then save_config() end
 end
 
@@ -8302,13 +8515,13 @@ local sections={
     {'home','Credits','Sputnik credits','Kev and Futurestunt','Garry forum and Discord'},
     {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision','Alliance skins included'},
     {'auto_vest','Auto Vest','Automatically vest nearby players - /avest','Aim and vest',
-        'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
+        'Command mode - /avmode or /ddmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
     {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of vest overlays'},
-    {'backup','Backup','Show active backup requests','Faction backup keybind','All custom locations','Mention wanted level'},
+    {'backup','Backup','Show active backup requests','Gang backup keybind','All custom locations','Mention wanted level'},
     {'backup','Portable Radio','Show frequency in chat messages','Checks /fmotd for alliance frequency and changes freq'},
     {'backup','Position & Appearance##backup','Backup overlay position','Draw a background','Draw a border'},
     {'backup','Style Properties##backup','Font size','Padding','Border Thickness','Rounding'},
@@ -8323,14 +8536,15 @@ local sections={
         'Automatically accept $1 repair offers from players','Offer $1 repair to nearest driver or passenger',
         'Automatically accept lawyer offered at $200',
         'Automatically retry picking a vehicle lock after a failed attempt','Spam LMB while holding a Sprunk can to quickly recover health'},
-    {'miscellaneous','Beacon Resolver','Resolve player IDs when written as "B20" to their actual name instead'},
+    {'miscellaneous','Names & Colors','Resolve player IDs when written as "B20" to their actual name instead','Colorize admin/donator status in Global Chat (/g)'},
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
         'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size','Reset size of lawyer cooldown overlay'},
     {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Anti Spam','Sign check - /si','Change insurance location - /ins',
-        'Guard nearby players quickly (guardnear) - /v'},
+        'Guard nearby players quickly (guardnear) - /v','Quickly reconnect to the server - /recon'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
+    {'miscellaneous','Paycheck Weapons','Automatically drop bad weapons on paycheck','Configure which weapon gifts to drop - /dropgun'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
     {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border','PEDS: text color','Number on the PEDS: text color','Sync text colors'},
     {'ped_counter','Style Properties##ped_counter','Font size','Padding','Border Thickness','Rounding'},
@@ -8341,7 +8555,7 @@ local sections={
     {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of turf and point overlays'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
     {'phone','SMS Players','Send SMS - /pm'},
-    {'phone','Weapons','Aim and sell weapons - /sellgun','Auto accept weapons if offered at 1$ or 0$'}
+    {'phone','Weapons','Aim and sell weapons - /sellgun','Craft weapons for yourself - /makegun','Auto accept weapons if offered at 1$ or 0$'}
 }
 function S.find(query,pages)
     local terms={}
@@ -8975,7 +9189,7 @@ function imgui.ToggleButton(str_id, state, text, disabled)
     return clicked
 end
 
-function imgui.SegmentedControl(name, items, selected_item_ptr, fixed_size)
+function imgui.SegmentedControl(name, items, selected_item_ptr, fixed_size, tooltips)
     local style = imgui.GetStyle()
     local draw_list = imgui.GetWindowDrawList()
     local colors = style.Colors
@@ -9072,6 +9286,7 @@ function imgui.SegmentedControl(name, items, selected_item_ptr, fixed_size)
 
         local is_selected = selected_item_ptr[0] == index - 1
         local is_hovered = imgui.IsItemHovered()
+        if is_hovered and tooltips and tooltips[index] then imgui.SetTooltip('%s',tooltips[index]) end
 
         hover_target = (is_hovered and not is_selected) and 1.0 or 0.0
         hover_alpha = hover_alpha + (hover_target - hover_alpha) * 8.0 * delta_time
@@ -10574,7 +10789,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.5", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.6", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
