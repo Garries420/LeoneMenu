@@ -506,7 +506,7 @@ function Misc:register()
         icon = fa("ELLIPSIS"),
         title = "Miscellaneous",
         icon_box_color = imgui.ImVec4(0.6, 0.6, 0.6, 1),
-        render_function = Misc.render_ui_settings
+        render_function = function() Misc:render_ui_settings() end
     })
 end
 
