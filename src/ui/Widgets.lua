@@ -515,7 +515,7 @@ function imgui.ToggleButton(str_id, state, text, disabled)
     return clicked
 end
 
-function imgui.SegmentedControl(name, items, selected_item_ptr, fixed_size)
+function imgui.SegmentedControl(name, items, selected_item_ptr, fixed_size, tooltips)
     local style = imgui.GetStyle()
     local draw_list = imgui.GetWindowDrawList()
     local colors = style.Colors
@@ -612,6 +612,7 @@ function imgui.SegmentedControl(name, items, selected_item_ptr, fixed_size)
 
         local is_selected = selected_item_ptr[0] == index - 1
         local is_hovered = imgui.IsItemHovered()
+        if is_hovered and tooltips and tooltips[index] then imgui.SetTooltip('%s',tooltips[index]) end
 
         hover_target = (is_hovered and not is_selected) and 1.0 or 0.0
         hover_alpha = hover_alpha + (hover_target - hover_alpha) * 8.0 * delta_time

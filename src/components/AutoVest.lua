@@ -425,33 +425,39 @@ function AutoVest:save_config()
     return carboneum.save(CONFIG_PATH, _config)
 end
 
+local vest_mode_tips={
+    'This will vest the alliance skins added by Garries/Garry manually. If outdated, speak to him.',
+    'This allows you to edit the skins yourself. It unlocks a cogwheel that allows you to fully customize the skins you want it to vest.',
+    "If you're technical enough to know what an HTML URL is, you can add your HTML skins list here and it will choose those skin IDs.",
+}
+
 function AutoVest:render_ui_settings()
     imgui.DrawChild('Auto Vest',function(width)
         H.toggle('Automatically vest nearby players - /avest','auto_vest',_config.is_enabled,width)
         imgui.Separator()
         H.bind('Aim and vest','aim_vest',_config.aim,width)
         imgui.Separator()
-        imgui.Text('Command mode - /avmode to swap between Normal and DD')
+        imgui.Text('Command mode - /avmode or /ddmode to swap between Normal and DD')
         imgui.SameLine(width-250)
         imgui.SegmentedControl('command_mode',{'Normal','DD'},_config.command_mode.current,imgui.ImVec2(250,0))
         imgui.Separator()
         local mode_width=315
         imgui.Text('Alliance skins to be vested')
-        if imgui.IsItemHovered() then imgui.SetTooltip('Automatic grabs Leone alliance skins; it can be outdated for 1-2 days. Use Manual in the meantime. Manual uses the groups added in the cogwheel.') end
-        imgui.SameLine(width-mode_width-40)
-        if imgui.AnimButton(fa('GEAR')) then
-            Editor:show(_config.groups,function(groups)
-                local previous=_config.groups
-                _config.groups=groups
-                if self:save_config() then return true end
-                _config.groups=previous
-                return false
-            end)
+        if _config.vester_mode[0]==VESTER_MODE.MANUAL then
+            imgui.SameLine(width-mode_width-40)
+            if imgui.AnimButton(fa('GEAR')) then
+                Editor:show(_config.groups,function(groups)
+                    local previous=_config.groups
+                    _config.groups=groups
+                    if self:save_config() then return true end
+                    _config.groups=previous
+                    return false
+                end)
+            end
         end
         imgui.SameLine(width-mode_width)
         local previous_mode=_config.vester_mode[0]
-        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual','URL'},_config.vester_mode,imgui.ImVec2(mode_width,0))
-        if imgui.IsItemHovered() then imgui.SetTooltip('URL mode vests only players whose skin IDs are in the linked HTML list.') end
+        imgui.SegmentedControl('alliance_mode',{'Automatic','Manual','URL'},_config.vester_mode,imgui.ImVec2(mode_width,0),vest_mode_tips)
         if _config.vester_mode[0]~=previous_mode then self:save_config() end
         if _config.vester_mode[0]==VESTER_MODE.URL then
             local url,changed=H.input('##vest_skin_url',_config.skin_url,'HTML url here...',imgui.GetContentRegionAvail().x,2048)

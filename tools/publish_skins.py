@@ -52,6 +52,6 @@ data = html.encode('utf-8')
 (root / 'skins').mkdir(exist_ok=True)
 (root / path).write_bytes(data)
 source.write_bytes(data)
-manifest = {'version': version, 'path': path, 'sha256': hashlib.sha256(data).hexdigest()}
+manifest = {'version': version, 'date': date, 'path': path, 'sha256': hashlib.sha256(data).hexdigest()}
 (root / 'skins/latest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')
 print(f'{len(skins)} skins published locally as {path}')

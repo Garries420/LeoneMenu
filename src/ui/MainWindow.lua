@@ -194,7 +194,9 @@ local function _render_content()
 end
 
 local function _render_window()
-    require("src.shared").hotkey_manager:flush_ui_input()
+    local hotkeys=require("src.shared").hotkey_manager
+    hotkeys.hovered_editor=nil
+    hotkeys:flush_ui_input()
     local display = imgui.GetIO().DisplaySize
     local style = imgui.GetStyle()
     local sidebar_width = imgui.ScaleValue(WINDOW.SIDEBAR_WIDTH)
@@ -221,6 +223,7 @@ local function _register()
 
     addEventHandler("onWindowMessage", function(msg, wparam)
         if msg == 0x0100 and wparam == vk.VK_ESCAPE and _main_window.is_open[0] then
+            if require("src.shared").hotkey_manager:claims_escape() then return end
             if _main_window.query~='' then
                 _main_window.query=''
             else
@@ -283,6 +286,7 @@ end
 
 function MainWindow:hide(persist)
     _main_window.is_open[0] = false
+    require('src.shared').hotkey_manager.hovered_editor=nil
     if persist~=false then save_config() end
 end
 

@@ -114,6 +114,7 @@ function E:render_random()
         imgui.Text('Shortcuts');imgui.Text('Sign check - /si')
         imgui.Text('Change insurance location - /ins')
         imgui.Text('Guard nearby players quickly (guardnear) - /v')
+        imgui.Text('Quickly reconnect to the server - /recon')
     end)
 end
 function E:render_vehicles()

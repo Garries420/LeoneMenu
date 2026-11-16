@@ -34,6 +34,7 @@ local locations=require('src.core.CustomLocations')
 local Rules=require('src.core.Rules')
 local show_locations=false
 local backup_active=false
+local server_wanted_level
 local interior_labels,labels_scanned={},false
 local interior_game_text_until=0
 local function observe_label(id,text)
@@ -61,6 +62,17 @@ local _config = default_data
 
 local Backup = {}
 
+local function wanted_level(value)
+    if type(value)=='number' and value>=0 and value<=6 and value%1==0 then return value end
+end
+
+local function current_wanted_level()
+    if server_wanted_level~=nil then return server_wanted_level end
+    -- A reload may occur after the last wanted-level update from SA-MP.
+    local first, level=storeWantedLevel(PLAYER_HANDLE)
+    return wanted_level(level) or wanted_level(first)
+end
+
 function Backup:is_requesting(player_id)
     if not sampIsPlayerConnected(player_id) then
         return false
@@ -74,6 +86,13 @@ end
 
 function Backup:register()
     carboneum.load(CONFIG_PATH, _config)
+    shared.event_handler:register('SERVER_CONNECTED',function()return true end,function()
+        backup_active=false
+        server_wanted_level=nil
+    end)
+    shared.event_handler:register('SET_PLAYER_WANTED_LEVEL',function()return true end,function(level)
+        server_wanted_level=wanted_level(level)
+    end)
     shared.event_handler:register('SHOW_TEXTDRAW',function()return true end,function(id,data)observe_label(id,data.text)end)
     shared.event_handler:register('TEXTDRAW_SET_STRING',function()return true end,observe_label)
     shared.event_handler:register('HIDE_TEXTDRAW',function()return true end,function(id)interior_labels[id]=nil end)
@@ -98,9 +117,8 @@ function Backup:register()
         end
         local wanted, ending = "", ""
         if _config.wanted[0] then
-            -- MoonLoader opcode 01C0 returns a result flag before the level.
-            local _, stars = storeWantedLevel(PLAYER_HANDLE)
-            if type(stars) == "number" and stars >= 1 and stars <= 6 and stars % 1 == 0 then
+            local stars = current_wanted_level()
+            if stars and stars>0 then
                 wanted = ("Wanted with %d %s! "):format(stars, stars == 1 and "charge" or "charges")
                 ending = "!"
             end
@@ -148,7 +166,7 @@ function Backup:render_ui_settings()
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton('##show_active_backups',_config.overlay.display)
         imgui.Separator()
-        imgui.Text('Faction backup keybind')
+        imgui.Text('Gang backup keybind')
         imgui.SameLine(width-350)
         if imgui.AnimButton('All custom locations') then show_locations=true end
         imgui.SameLine(width-180)

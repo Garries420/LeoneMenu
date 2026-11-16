@@ -13,6 +13,8 @@ local Player = require("src.utils.Player")
 local shared = require("src.shared")
 local Rules = require('src.core.Rules')
 local FriskWarning = require('src.components.FriskWarning')
+local WeaponOffers = require('src.components.WeaponOffers')
+local H = require('src.ui.Helpers')
 
 local SPRUNK_WAIT_TIME = 0.050
 local SPECIAL_ACTION_DRINK_SPRUNK = 23
@@ -20,6 +22,8 @@ local SPECIAL_ACTION_DRINK_SPRUNK = 23
 local CONFIG_PATH = "config/Leone Menu/miscellaneous.json"
 
 local default_data = {
+    colorize_global = imgui.new.bool(false),
+    paycheck_drops = WeaponOffers.drop_defaults(),
     font = {
         path = ""
     },
@@ -125,23 +129,61 @@ local function get_system_fonts()
     return found
 end
 
+local reconnect_request, retried_nickname
 local function _force_recon(delay)
-    delay = delay or 0
-
-    sampSetGamestate(5)
-
-    local bs = raknetNewBitStream()
-    raknetEmulRpcReceiveBitStream(40, bs)
-    raknetDeleteBitStream(bs)
-
-    if sampIsDialogActive() then
-        sampCloseCurrentDialogWithButton(0)
-    end
-
+    local address,port=sampGetCurrentServerAddress()
+    if not address or address=='' or not port or port==0 then return false end
+    local request={}
+    reconnect_request=request
     lua_thread.create(function()
         wait(delay * 1000)
-        sampSetGamestate(1)
+        if reconnect_request~=request then return end
+        reconnect_request=nil
+        sampConnectToServer(address,port)
     end)
+    return true
+end
+
+local function retry_rejected_nickname()
+    if retried_nickname or reconnect_request then return end
+    if _force_recon(0) then
+        retried_nickname=true
+        msg('Reconnecting...')
+    end
+end
+
+local global_ranks={
+    {'Ruby Donator','DA2A1F'},{'Sapphire Donator','2C7DE3'},{'Diamond Donator','00ABDA'},
+    {'Junior Admin','00FF00'},{'General Admin','FDEE00'},{'Senior Admin','FFAA65'},{'Head Admin','D5010B'},
+    {'Asst.Management','910055'},{'Asst.Manager','910055'},{'Asst. Management','910055'},{'Asst. Manager','910055'},
+    {'Management','AE00A8'},{'Manager','AE00A8'},
+    {'Junior Helper','33CCFF'},{'Senior Helper','33CCFF'},{'Head Helper','33CCFF'},
+}
+
+local function colorize_global_rank(text,color)
+    local restore=string.format('{%06X}',bit.rshift(color,8))
+    local position=1
+    local function skip_colors()
+        while true do
+            local after=text:match('^({%x%x%x%x%x%x})()',position)
+            if not after then return end
+            restore=after
+            position=position+#after
+        end
+    end
+    skip_colors()
+    position=text:match('^%(%(%s+()',position)
+    if not position or not Rules.strip(text):match('%s+%)%)%s*$') then return text end
+    skip_colors()
+    local heading=text:sub(position):match('^(.-): ')
+    if not heading then return text end
+    for _,rank in ipairs(global_ranks) do
+        local label,hex=rank[1],rank[2]
+        if heading:sub(1,#label+1)==label..' ' and heading:sub(#label+2):match('%S') then
+            return text:sub(1,position-1)..'{'..hex..'}'..label..restore..text:sub(position+#label)
+        end
+    end
+    return text
 end
 
 local function resolve_beacons_in_text(text, color)
@@ -300,6 +342,7 @@ local function _register_event_handlers()
                 local normal_color = last_hex_color or string.format("{%06X}", bit.rshift(color, 8))
                 updated = resolve_beacons_in_text(updated, normal_color)
             end
+            if _config.colorize_global[0] then updated=colorize_global_rank(updated,color) end
             if updated~=text then return { color, updated } end
         end
     )
@@ -369,9 +412,10 @@ local function _register_commands()
     sampRegisterChatCommand(
         "recon",
         function(args)
-            local delay = tonumber(args) or 0
+            local delay = math.max(0,tonumber(args) or 0)
 
-            _force_recon(delay)
+            retried_nickname=false
+            if not _force_recon(delay) then return msg('No current server to reconnect to.') end
 
             local msg_text = delay == 0 and "Reconnecting..." or
                 "Reconnecting in " .. delay .. " second" .. (delay == 1 and "..." or "s...")
@@ -391,7 +435,8 @@ local function _register_commands()
             end
 
             sampSetLocalPlayerName(args)
-            _force_recon(0)
+            retried_nickname=false
+            if not _force_recon(0) then return msg('No current server to reconnect to.') end
             msg("Reconnecting with the name '" .. args .. "'.")
         end
     )
@@ -445,6 +490,15 @@ function Misc:register()
     end
 
     _register_event_handlers()
+    shared.event_handler:register('CONNECTION_REJECTED',function(reason)return reason==2 end,retry_rejected_nickname)
+    shared.event_handler:register('SERVER_MESSAGE',function(_,text)
+        return Rules.trim(Rules.strip(text)):lower():match('^connection rejected: unacceptable nickname[%s%.]*$')~=nil
+    end,retry_rejected_nickname)
+    shared.event_handler:register('SERVER_CONNECTED',function()return true end,function()
+        retried_nickname=false
+        reconnect_request=nil
+    end)
+    WeaponOffers.register_paycheck_drop(_config.paycheck_drops)
     _register_commands()
     FriskWarning.register(_config.sniper_frisk_sound.enabled)
 
@@ -551,10 +605,14 @@ function Misc:render_ui_settings()
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))
-    imgui.DrawChild("Beacon Resolver", function(width)
+    imgui.DrawChild("Names & Colors", function(width)
         imgui.Text('Resolve player IDs when written as "B20" to their actual name instead')
         imgui.SameLine(width - imgui.ToggleButtonWidth())
         imgui.ToggleButton("##beacon_resolver", _config.beacon_resolver.enabled)
+        imgui.Separator()
+        if H.toggle('Colorize admin/donator status in Global Chat (/g)','global_rank_colors',_config.colorize_global,width) then
+            Misc:save_config()
+        end
     end)
 
     imgui.Dummy(imgui.ImVec2(0, 5))
@@ -573,6 +631,7 @@ function Misc:render_ui_settings()
     imgui.Dummy(imgui.ImVec2(0, 5))
     require("src.components.Extras"):render_random()
     require("src.components.Extras"):render_vehicles()
+    WeaponOffers.render_paycheck_drop(_config.paycheck_drops,function() self:save_config() end)
 end
 
 return Misc

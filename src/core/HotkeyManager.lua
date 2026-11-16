@@ -88,8 +88,6 @@ local function _confirm_edit(self)
 end
 
 local function _handle_edit_key_down(self,key)
-    if key==vk.VK_ESCAPE then _cancel_edit(self);self.ui_release=true;return end
-    if key==vk.VK_BACK then self.edit_recorded={};_confirm_edit(self);self.ui_release=true;return end
     -- Capture only keys that overlap physically; release commits immediately.
     if #self.edit_recorded==0 then
         for _,mod in ipairs({vk.VK_LCONTROL,vk.VK_RCONTROL,vk.VK_LSHIFT,vk.VK_RSHIFT,vk.VK_LMENU,vk.VK_RMENU}) do
@@ -100,6 +98,14 @@ local function _handle_edit_key_down(self,key)
     end
     for _,k in ipairs(self.edit_recorded) do if k==key then return end end
     if #self.edit_recorded<self.MAX_COMBO then self.edit_recorded[#self.edit_recorded+1]=key end
+end
+
+local function clear_key(key)
+    return key==vk.VK_ESCAPE or key==vk.VK_BACK or key==vk.VK_DELETE
+end
+
+function HotkeyManager:claims_escape()
+    return self.cleared_key==vk.VK_ESCAPE or self.edit_target~=nil or self.hovered_editor~=nil
 end
 
 local function _try_execute_hotkeys(self)
@@ -140,9 +146,13 @@ local function _on_window_message(self, msg, wparam, lparam)
         self.edit_mode = false
         self.edit_target = nil
         self.edit_recorded = {}
+        self.hovered_editor = nil
+        self.cleared_key = nil
 
         return
     end
+
+    if msg==wm.WM_MOUSEMOVE then self.hovered_editor=nil;return end
 
     local mouse_down = {[0x201]=1,[0x204]=2,[0x207]=4}
     local mouse_up = {[0x202]=1,[0x205]=2,[0x208]=4}
@@ -155,6 +165,21 @@ local function _on_window_message(self, msg, wparam, lparam)
     local key = mouse_key or _get_modifier_key(wparam, lparam)
 
     if is_down then
+        if clear_key(key) and (self.edit_target or self.hovered_editor or self.cleared_key==key) then
+            local hotkey=self.registered[self.edit_target or self.hovered_editor]
+            if hotkey then
+                hotkey.keys={}
+                hotkey.new_keys=hotkey.keys
+                self.edit_mode=false
+                self.edit_target=nil
+                self.edit_recorded={}
+                self.pressed={}
+                self.ui_release=true
+            end
+            self.cleared_key=key
+            consumeWindowMessage(true,true)
+            return
+        end
         if not self.pressed[key] then
             self.pressed[key] = true
             if self.edit_mode then
@@ -165,6 +190,11 @@ local function _on_window_message(self, msg, wparam, lparam)
             end
         end
     else
+        if self.cleared_key==key then
+            self.cleared_key=nil
+            consumeWindowMessage(true,true)
+            return
+        end
         local recording=self.edit_mode
         if recording then
             for _,k in ipairs(self.edit_recorded) do
@@ -344,6 +374,7 @@ function HotkeyManager:draw_key_editor(name, size)
     if imgui.AnimButton(fa("KEYBOARD") .. " " .. text .. "##" .. name, size) then
         self:start_editing(name)
     end
+    if imgui.IsItemHovered() then self.hovered_editor=name end
 
     if hotkey.new_keys then
         local nk = hotkey.new_keys

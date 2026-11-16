@@ -4,13 +4,13 @@ local sections={
     {'home','Credits','Sputnik credits','Kev and Futurestunt','Garry forum and Discord'},
     {'home',false,'Reload Leone Menu','Check for updates','Alliance skins revision','Alliance skins included'},
     {'auto_vest','Auto Vest','Automatically vest nearby players - /avest','Aim and vest',
-        'Command mode - /avmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
+        'Command mode - /avmode or /ddmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
     {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of vest overlays'},
-    {'backup','Backup','Show active backup requests','Faction backup keybind','All custom locations','Mention wanted level'},
+    {'backup','Backup','Show active backup requests','Gang backup keybind','All custom locations','Mention wanted level'},
     {'backup','Portable Radio','Show frequency in chat messages','Checks /fmotd for alliance frequency and changes freq'},
     {'backup','Position & Appearance##backup','Backup overlay position','Draw a background','Draw a border'},
     {'backup','Style Properties##backup','Font size','Padding','Border Thickness','Rounding'},
@@ -25,14 +25,15 @@ local sections={
         'Automatically accept $1 repair offers from players','Offer $1 repair to nearest driver or passenger',
         'Automatically accept lawyer offered at $200',
         'Automatically retry picking a vehicle lock after a failed attempt','Spam LMB while holding a Sprunk can to quickly recover health'},
-    {'miscellaneous','Beacon Resolver','Resolve player IDs when written as "B20" to their actual name instead'},
+    {'miscellaneous','Names & Colors','Resolve player IDs when written as "B20" to their actual name instead','Colorize admin/donator status in Global Chat (/g)'},
     {'miscellaneous','Frisking','Play sound when frisking a player who has a sniper rifle','Aim and frisk a player'},
     {'miscellaneous','Lawyering','Auto Lawyer - /al','Auto Lawyer nearest wanted','Auto Free - /afree','Auto Free nearest prisoner',
         'Cooldown on /afree and /al','Lawyer cooldown overlay position and scroll wheel size','Reset size of lawyer cooldown overlay'},
     {'miscellaneous','Random',"Skips over parachute but it reappears once you're falling - /skippara",'Anti Spam','Sign check - /si','Change insurance location - /ins',
-        'Guard nearby players quickly (guardnear) - /v'},
+        'Guard nearby players quickly (guardnear) - /v','Quickly reconnect to the server - /recon'},
     {'miscellaneous','Vehicles','Vehicle storage and typed slot preview - /vst /fv /vtow','Spawn/Despawn vehicle - /vst',
         'Find Vehicle - /fv','Tow vehicle - /vtow'},
+    {'miscellaneous','Paycheck Weapons','Automatically drop bad weapons on paycheck','Configure which weapon gifts to drop - /dropgun'},
     {'ped_counter','Ped Counter','Show overlay with active ped slot count','Enable overlay outside interiors'},
     {'ped_counter','Position & Appearance##ped_counter','Ped counter overlay position','Draw a background','Draw a border','PEDS: text color','Number on the PEDS: text color','Sync text colors'},
     {'ped_counter','Style Properties##ped_counter','Font size','Padding','Border Thickness','Rounding'},
@@ -43,7 +44,7 @@ local sections={
     {'capture','Position##capture','Turf and point overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of turf and point overlays'},
     {'phone','Phone','Show Player ID','Colorize Name','Hide Extra Lines'},
     {'phone','SMS Players','Send SMS - /pm'},
-    {'phone','Weapons','Aim and sell weapons - /sellgun','Auto accept weapons if offered at 1$ or 0$'}
+    {'phone','Weapons','Aim and sell weapons - /sellgun','Craft weapons for yourself - /makegun','Auto accept weapons if offered at 1$ or 0$'}
 }
 function S.find(query,pages)
     local terms={}
