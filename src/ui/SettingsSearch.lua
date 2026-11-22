@@ -7,6 +7,7 @@ local sections={
         'Command mode - /avmode or /ddmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
+        'Automatically use faid - /afaid',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
     {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of vest overlays'},
