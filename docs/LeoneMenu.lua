@@ -56,6 +56,28 @@ local _accept_vest_state = {
     pending_offer_price = ACCEPT_VEST.DEFAULT_PRICE,
 }
 
+local _auto_faid = {
+    is_enabled = imgui.new.bool(false),
+    next_use_at = nil,
+}
+
+local function _use_auto_faid()
+    if not _auto_faid.is_enabled[0] or not _auto_faid.next_use_at
+        or os.clock() < _auto_faid.next_use_at
+        or sampGetGamestate() ~= 3 or not sampIsLocalPlayerSpawned()
+        or getCharHealth(PLAYER_PED) <= 0 then
+        return
+    end
+    _auto_faid.next_use_at = nil
+    sampSendChat('/faid')
+end
+
+local function _set_auto_faid(enabled)
+    _auto_faid.is_enabled[0] = enabled
+    _auto_faid.next_use_at = enabled and os.clock() or nil
+    _use_auto_faid()
+end
+
 local function _set_pending_offer(from_id, price)
     _accept_vest_state.pending_offer_from_id = from_id
     _accept_vest_state.pending_offer_price = price
@@ -69,6 +91,7 @@ local function _set_pending_offer(from_id, price)
 end
 
 local function _handle_ped_tick(x, y, z)
+    _use_auto_faid()
     if not VestRules.can_accept() then _set_pending_offer(-1,ACCEPT_VEST.DEFAULT_PRICE);return end
     if not _accept_vest_state.is_enabled[0] then
         return
@@ -112,6 +135,28 @@ local function _handle_ped_tick(x, y, z)
 end
 
 local function _register_event_handlers()
+
+    shared.event_handler:register(
+        'SERVER_MESSAGE',
+        function(_, text)
+            if not _auto_faid.is_enabled[0] then return false end
+            local message = text:gsub('{%x%x%x%x%x%x}', ''):match('^%s*(.-)%s*$')
+            return message == 'Your first aid kit no longer takes effect.'
+                or message == 'Your first aid kit has been stopped, because you were damaged by another player.'
+        end,
+        function(_, text)
+            if text:find('damaged by another player', 1, true) then
+                _auto_faid.next_use_at = os.clock() + 15
+            else
+                _auto_faid.next_use_at = _auto_faid.next_use_at or os.clock()
+                _use_auto_faid()
+            end
+        end
+    )
+
+    shared.event_handler:register('SERVER_CONNECTED', function() return true end, function()
+        _set_auto_faid(false)
+    end)
 
     shared.event_handler:register(
         "SERVER_MESSAGE",
@@ -166,7 +211,7 @@ local function _register_event_handlers()
         "SERVER_MESSAGE",
         function(color, text)
             if color == Colors.YELLOW
-                and _accept_vest_state.is_enabled[0]
+                and (_accept_vest_state.is_enabled[0] or _auto_faid.is_enabled[0])
                 and _config.should_disable_after_point[0]
             then
                 local point, captured_by = text:match("^.- has taken control of (.-) for (.-)%.$")
@@ -177,9 +222,14 @@ local function _register_event_handlers()
             return false
         end,
         function()
+            local vest_enabled = _accept_vest_state.is_enabled[0]
+            local faid_enabled = _auto_faid.is_enabled[0]
             _accept_vest_state.is_enabled[0] = false
+            _set_auto_faid(false)
+            local label = vest_enabled and 'Auto Accept Vest' or 'Auto First Aid'
+            if vest_enabled and faid_enabled then label = 'Auto Accept Vest and Auto First Aid' end
             shared.notification:show(
-                "Auto Accept Vest has been disabled as the point is over.",
+                label .. " disabled as the point is over.",
                 shared.notification.types.INFO
             )
         end
@@ -213,6 +263,11 @@ local function _register_event_handlers()
 end
 
 local function _register_commands()
+    sampRegisterChatCommand('afaid', function()
+        _set_auto_faid(not _auto_faid.is_enabled[0])
+        msg(string.format('Auto First Aid has been %s{FFFFFF}.',
+            _auto_faid.is_enabled[0] and '{00FF00}enabled' or '{FF0000}disabled'))
+    end)
     sampRegisterChatCommand(
         "av",
         function()
@@ -270,6 +325,12 @@ function AcceptVest:render_ui_settings()
     local H=require('src.ui.Helpers')
     imgui.DrawChild('Accept Vest',function(width)
         H.toggle('Automatically accept vest offers priced at $200 - /av','accept_vest',_accept_vest_state.is_enabled,width)
+        imgui.Separator()
+        local faid_tip = 'Uses /faid immediately, then again as soon as the current first aid kit wears off.\nWaits 15 seconds if another player damages you.\nStops when the point is over with the point-completion stop enabled.'
+        if H.toggle('Automatically use faid - /afaid', 'auto_faid', _auto_faid.is_enabled, width, faid_tip) then
+            _set_auto_faid(_auto_faid.is_enabled[0])
+        end
+        if imgui.IsItemHovered() then imgui.SetTooltip('%s', faid_tip) end
         imgui.Separator()
         imgui.Text('Accept if vest is below');imgui.SameLine(width-120);imgui.SetNextItemWidth(120)
         imgui.InputInt('##accept_below',_config.accept_below);_config.accept_below[0]=math.max(0,math.min(100,_config.accept_below[0]))
@@ -6410,7 +6471,7 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.7',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.8',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -6639,7 +6700,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.7")
+script_version("1.1.8")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -8518,6 +8579,7 @@ local sections={
         'Command mode - /avmode or /ddmode to swap between Normal and DD','Alliance skins to be vested','Add gang and Auto import /gangs','HTML skin list URL',
         'Vest interval (seconds)','Offer if vest is below','Show offered-to overlay'},
     {'auto_vest','Accept Vest','Automatically accept vest offers priced at $200 - /av',
+        'Automatically use faid - /afaid',
         'Accept if vest is below','Manual Accept','Manually accept vest',
         'Automatically stop accepting vest offers upon point completion','Show offered-by overlay'},
     {'auto_vest','Position##vesting','Vest overlay position and scroll wheel size','Overlay Style - Stacked and Vertical','Reset size of vest overlays'},
@@ -10789,7 +10851,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.7", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.8", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
