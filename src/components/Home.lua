@@ -2,14 +2,9 @@ local imgui=require('upmimgui')
 local fa=require('fAwesome7')
 local H=require('src.ui.Helpers')
 local U=require('src.core.Updates')
-local AllianceRoster=require('src.core.AllianceRoster')
 local MainWindow=require('src.ui.MainWindow')
 local Home={reload_requested=false,update_check_requested=false}
 local alliance_colors={}
-for i,gang in ipairs(AllianceRoster) do
-    local n=gang.color
-    alliance_colors[i]=imgui.ImVec4(math.floor(n/65536)/255,math.floor(n/256)%256/255,n%256/255,1)
-end
 function Home:register()
     MainWindow:add_page('home',{title='Home',icon=fa('HOUSE'),order=0,render_function=function()
         imgui.Heading('Leone Menu')
@@ -33,9 +28,14 @@ function Home:register()
         imgui.Text('Alliance Skin Date: '..(U.alliance.date or 'Unavailable'))
         if imgui.IsItemHovered() then imgui.SetTooltip('Day/Month/year - Swedish Timezone') end
         imgui.TextUnformatted('Alliance skins included:')
-        for i,gang in ipairs(AllianceRoster) do
+        for _,gang in ipairs(U.get_alliance_roster()) do
+            local color=gang.color
+            if not alliance_colors[color] then
+                alliance_colors[color]=imgui.ImVec4(math.floor(color/65536)/255,math.floor(color/256)%256/255,color%256/255,1)
+            end
             imgui.SameLine()
-            imgui.TextColored(alliance_colors[i],gang.short)
+            if imgui.CalcTextSize(gang.short).x > imgui.GetContentRegionAvail().x then imgui.NewLine() end
+            imgui.TextColored(alliance_colors[color],gang.short)
             if imgui.IsItemHovered() then imgui.SetTooltip('%s',gang.name) end
         end
     end})

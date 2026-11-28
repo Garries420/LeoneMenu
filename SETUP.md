@@ -4,13 +4,18 @@ GitHub Pages serves the files in `main` under `/docs`. In Settings → Pages,
 choose **Deploy from a branch**, then **main** and **/docs**. The feed is
 available at https://garries420.github.io/LeoneMenu/ after deployment.
 
-## Update alliance skins
+## Update alliance skins and gang names
 
-Edit the IDs in `github-ready/alliance-skins.html` and run
-`python tools/publish_skins.py`. It stamps the HTML with the current Swedish
-date and time, creates a dated HTML file, and updates `skins/latest.json`.
-Publish the generated `alliance-skins.html` and `skins/` files under `docs/`.
-The menu checks this feed on startup, on reload, hourly, and from Home.
+Edit `github-ready/alliance-skins.html`. Use the `alliance-skins` block for
+skin IDs and the `alliance-gangs` block for gang names. Each gang row uses
+`Short name | Full name | RRGGBB`, with a six-digit hexadecimal color.
+
+Run `python tools/publish_skins.py` to stamp the page with the current Swedish
+date and time, create a dated HTML file, and update `skins/latest.json`.
+Publish `alliance-skins.html`, the new dated file, and `skins/latest.json`
+together under `docs/`. Leone Menu checks the feed on startup, on reload,
+hourly, and from Home. Version 1.2.0 and later apply the gang names, skin IDs,
+and date together from that revision.
 
 ## Update the menu
 

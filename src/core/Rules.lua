@@ -13,6 +13,25 @@ function R.skins(text)
     if #out==0 then return nil end
     return out
 end
+local function alliance_roster(text)
+    local roster, seen = {}, {}
+    for line in text:gmatch('[^\r\n]+') do
+        line = R.trim(line)
+        if line ~= '' then
+            local short, name, color = line:match("^([%w ._'%-]+)|([^|]+)|%s*(%x%x%x%x%x%x)$")
+            if not short then return nil end
+            short, name = R.trim(short), R.trim(name)
+            local key = short:lower()
+            if not short:match('^%w') or #short > 24 or name == '' or name:find('%c') or seen[key] then
+                return nil
+            end
+            seen[key] = true
+            roster[#roster + 1] = {short = short, name = name, color = tonumber(color, 16)}
+        end
+    end
+    return roster
+end
+
 function R.alliance(html)
     local version=tonumber(html:match('<meta%s+name="leone%-skins%-version"%s+content="(%d+)"%s*/?>'))
     local ids=html:match('<pre%s+id="alliance%-skins">%s*([^<]+)</pre>')
@@ -20,7 +39,14 @@ function R.alliance(html)
     if not version or not skins then return nil end
     local date=html:match('<meta%s+name="leone%-skins%-date"%s+content="([^"]+)"%s*/?>')
     if date and not date:match('^%d%d/%d%d/%d%d%d%d %d%d:%d%d[AP]M CES?T$') then return nil end
-    return {version=version,skins=skins,date=date}
+    local roster
+    local roster_tag = '<pre id="alliance-gangs">'
+    if html:find(roster_tag, 1, true) then
+        local rows = html:match('<pre id="alliance%-gangs">([^<]*)</pre>')
+        roster = rows and alliance_roster(rows)
+        if not roster then return nil end
+    end
+    return {version=version,skins=skins,date=date,roster=roster}
 end
 function R.html_skins(html)
     if type(html)~='string' or #html>131072 then return nil end

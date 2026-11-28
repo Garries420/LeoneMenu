@@ -34,6 +34,20 @@ skins = [int(value.strip()) for value in ids[1].split(',') if value.strip()]
 if not skins or any(skin > 311 or skin == 74 for skin in skins) or len(skins) != len(set(skins)):
     raise SystemExit('Check the alliance skin list for invalid or duplicate IDs.')
 
+rosters = re.findall(r'<pre id="alliance-gangs">([^<]*)</pre>', html)
+if len(rosters) != 1:
+    raise SystemExit('Include one alliance-gangs block in the alliance page.')
+seen = set()
+for row in rosters[0].split('\n'):
+    if not row.strip():
+        continue
+    fields = [value.strip() for value in row.split('|')]
+    if (len(fields) != 3 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._'\-]{0,23}", fields[0])
+            or not fields[1] or re.search(r'[\x00-\x1f\x7f]', fields[1])
+            or not re.fullmatch(r'[0-9A-Fa-f]{6}', fields[2]) or fields[0].lower() in seen):
+        raise SystemExit(f'Invalid or duplicate alliance gang row: {row}')
+    seen.add(fields[0].lower())
+
 utc = datetime.now(timezone.utc).replace(microsecond=0)
 version = int(utc.timestamp())
 stockholm, abbreviation = swedish_time(utc)
@@ -54,4 +68,4 @@ data = html.encode('utf-8')
 source.write_bytes(data)
 manifest = {'version': version, 'date': date, 'path': path, 'sha256': hashlib.sha256(data).hexdigest()}
 (root / 'skins/latest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8', newline='\n')
-print(f'{len(skins)} skins published locally as {path}')
+print(f'{len(skins)} skins and {len(seen)} gangs published locally as {path}')

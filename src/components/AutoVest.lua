@@ -6,7 +6,6 @@ local imgui = require("upmimgui")
 local keys = require("game.keys")
 
 local Updates = require("src.core.Updates")
-local AllianceRoster = require("src.core.AllianceRoster")
 local skin_feed = require('src.components.VestSkinFeed').new()
 local H = require("src.ui.Helpers")
 local Rules = require("src.core.Rules")
@@ -314,11 +313,19 @@ end
 local function announce_mode()
     local mode=_config.vester_mode[0]
     if mode==VESTER_MODE.AUTOMATIC then
-        local names={}
-        for i,gang in ipairs(AllianceRoster) do
-            names[i]=('{%06X}%s'):format(gang.color,gang.short)
+        local header='[Leone Menu] {FFFFFF}Vester Mode: Alliance'
+        local line=header
+        for _,gang in ipairs(Updates.get_alliance_roster()) do
+            local name=('{%06X}%s'):format(gang.color,gang.short)
+            local separator=line==header and ' - ' or ', '
+            if #line + #separator + #name > 144 then
+                sampAddChatMessage(line,0xFF1E3348)
+                line=header..' - '..name
+            else
+                line=line..separator..name
+            end
         end
-        sampAddChatMessage('[Leone Menu] {FFFFFF}Vester Mode: Alliance - '..table.concat(names,', '),0xFF1E3348)
+        sampAddChatMessage(line,0xFF1E3348)
     else
         msg('Vester Mode: '..(mode==VESTER_MODE.URL and 'URL' or 'Manual'))
     end

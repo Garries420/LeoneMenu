@@ -1,8 +1,9 @@
 local Config=require('src.core.Config')
 local R=require('src.core.Rules')
+local default_roster=require('src.core.AllianceRoster')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.9',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.2.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -13,6 +14,7 @@ local initial={68,94,62,221,214,229,234,235,261,272,43,91,76,132,137,209,212,230
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end
+function U.get_alliance_roster() return U.alliance.roster or default_roster end
 local function request(url,timeout,success,failure)
     local ok,err=pcall(function()
         http_request=Http:new('GET',url,nil,timeout,true):then_(function(response)
@@ -44,7 +46,7 @@ function U.check_skins(manual)
         if m.version<=U.alliance.version and U.alliance.date then return finish('Alliance skins are current') end
         request(base..m.path,20,function(page)
             local parsed=page.status_code==200 and U.sha256(page.text)==m.sha256:lower() and R.alliance(page.text)
-            if not parsed or not parsed.date or parsed.version~=m.version or parsed.version<U.alliance.version then return unavailable() end
+            if not parsed or not parsed.date or not parsed.roster or parsed.version~=m.version or parsed.version<U.alliance.version then return unavailable() end
             if not Config.write(cache,page.text) then return finish('Could not save skin update; previous list retained') end
             U.alliance=parsed
             finish('Alliance skins updated')
