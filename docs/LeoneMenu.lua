@@ -357,7 +357,6 @@ local imgui = require("upmimgui")
 local keys = require("game.keys")
 
 local Updates = require("src.core.Updates")
-local AllianceRoster = require("src.core.AllianceRoster")
 local skin_feed = require('src.components.VestSkinFeed').new()
 local H = require("src.ui.Helpers")
 local Rules = require("src.core.Rules")
@@ -665,11 +664,19 @@ end
 local function announce_mode()
     local mode=_config.vester_mode[0]
     if mode==VESTER_MODE.AUTOMATIC then
-        local names={}
-        for i,gang in ipairs(AllianceRoster) do
-            names[i]=('{%06X}%s'):format(gang.color,gang.short)
+        local header='[Leone Menu] {FFFFFF}Vester Mode: Alliance'
+        local line=header
+        for _,gang in ipairs(Updates.get_alliance_roster()) do
+            local name=('{%06X}%s'):format(gang.color,gang.short)
+            local separator=line==header and ' - ' or ', '
+            if #line + #separator + #name > 144 then
+                sampAddChatMessage(line,0xFF1E3348)
+                line=header..' - '..name
+            else
+                line=line..separator..name
+            end
         end
-        sampAddChatMessage('[Leone Menu] {FFFFFF}Vester Mode: Alliance - '..table.concat(names,', '),0xFF1E3348)
+        sampAddChatMessage(line,0xFF1E3348)
     else
         msg('Vester Mode: '..(mode==VESTER_MODE.URL and 'URL' or 'Manual'))
     end
@@ -2005,14 +2012,9 @@ local imgui=require('upmimgui')
 local fa=require('fAwesome7')
 local H=require('src.ui.Helpers')
 local U=require('src.core.Updates')
-local AllianceRoster=require('src.core.AllianceRoster')
 local MainWindow=require('src.ui.MainWindow')
 local Home={reload_requested=false,update_check_requested=false}
 local alliance_colors={}
-for i,gang in ipairs(AllianceRoster) do
-    local n=gang.color
-    alliance_colors[i]=imgui.ImVec4(math.floor(n/65536)/255,math.floor(n/256)%256/255,n%256/255,1)
-end
 function Home:register()
     MainWindow:add_page('home',{title='Home',icon=fa('HOUSE'),order=0,render_function=function()
         imgui.Heading('Leone Menu')
@@ -2036,9 +2038,14 @@ function Home:register()
         imgui.Text('Alliance Skin Date: '..(U.alliance.date or 'Unavailable'))
         if imgui.IsItemHovered() then imgui.SetTooltip('Day/Month/year - Swedish Timezone') end
         imgui.TextUnformatted('Alliance skins included:')
-        for i,gang in ipairs(AllianceRoster) do
+        for _,gang in ipairs(U.get_alliance_roster()) do
+            local color=gang.color
+            if not alliance_colors[color] then
+                alliance_colors[color]=imgui.ImVec4(math.floor(color/65536)/255,math.floor(color/256)%256/255,color%256/255,1)
+            end
             imgui.SameLine()
-            imgui.TextColored(alliance_colors[i],gang.short)
+            if imgui.CalcTextSize(gang.short).x > imgui.GetContentRegionAvail().x then imgui.NewLine() end
+            imgui.TextColored(alliance_colors[color],gang.short)
             if imgui.IsItemHovered() then imgui.SetTooltip('%s',gang.name) end
         end
     end})
@@ -6015,6 +6022,25 @@ function R.skins(text)
     if #out==0 then return nil end
     return out
 end
+local function alliance_roster(text)
+    local roster, seen = {}, {}
+    for line in text:gmatch('[^\r\n]+') do
+        line = R.trim(line)
+        if line ~= '' then
+            local short, name, color = line:match("^([%w ._'%-]+)|([^|]+)|%s*(%x%x%x%x%x%x)$")
+            if not short then return nil end
+            short, name = R.trim(short), R.trim(name)
+            local key = short:lower()
+            if not short:match('^%w') or #short > 24 or name == '' or name:find('%c') or seen[key] then
+                return nil
+            end
+            seen[key] = true
+            roster[#roster + 1] = {short = short, name = name, color = tonumber(color, 16)}
+        end
+    end
+    return roster
+end
+
 function R.alliance(html)
     local version=tonumber(html:match('<meta%s+name="leone%-skins%-version"%s+content="(%d+)"%s*/?>'))
     local ids=html:match('<pre%s+id="alliance%-skins">%s*([^<]+)</pre>')
@@ -6022,7 +6048,14 @@ function R.alliance(html)
     if not version or not skins then return nil end
     local date=html:match('<meta%s+name="leone%-skins%-date"%s+content="([^"]+)"%s*/?>')
     if date and not date:match('^%d%d/%d%d/%d%d%d%d %d%d:%d%d[AP]M CES?T$') then return nil end
-    return {version=version,skins=skins,date=date}
+    local roster
+    local roster_tag = '<pre id="alliance-gangs">'
+    if html:find(roster_tag, 1, true) then
+        local rows = html:match('<pre id="alliance%-gangs">([^<]*)</pre>')
+        roster = rows and alliance_roster(rows)
+        if not roster then return nil end
+    end
+    return {version=version,skins=skins,date=date,roster=roster}
 end
 function R.html_skins(html)
     if type(html)~='string' or #html>131072 then return nil end
@@ -6468,9 +6501,10 @@ end
 package.preload['src.core.Updates'] = function()
 local Config=require('src.core.Config')
 local R=require('src.core.Rules')
+local default_roster=require('src.core.AllianceRoster')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.9',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.2.0',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
@@ -6481,6 +6515,7 @@ local initial={68,94,62,221,214,229,234,235,261,272,43,91,76,132,137,209,212,230
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end
+function U.get_alliance_roster() return U.alliance.roster or default_roster end
 local function request(url,timeout,success,failure)
     local ok,err=pcall(function()
         http_request=Http:new('GET',url,nil,timeout,true):then_(function(response)
@@ -6512,7 +6547,7 @@ function U.check_skins(manual)
         if m.version<=U.alliance.version and U.alliance.date then return finish('Alliance skins are current') end
         request(base..m.path,20,function(page)
             local parsed=page.status_code==200 and U.sha256(page.text)==m.sha256:lower() and R.alliance(page.text)
-            if not parsed or not parsed.date or parsed.version~=m.version or parsed.version<U.alliance.version then return unavailable() end
+            if not parsed or not parsed.date or not parsed.roster or parsed.version~=m.version or parsed.version<U.alliance.version then return unavailable() end
             if not Config.write(cache,page.text) then return finish('Could not save skin update; previous list retained') end
             U.alliance=parsed
             finish('Alliance skins updated')
@@ -6699,7 +6734,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.9")
+script_version("1.2.0")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -10850,7 +10885,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.9", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.2.0", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
