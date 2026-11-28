@@ -5215,7 +5215,6 @@ return {
     {short='GSH', name='Grove Street Hustlas', color=0x0D660B},
     {short='HOM', name='House of Mercy', color=0xFFFFC1},
     {short='Leone', name='Leone', color=0x2B4866},
-    {short='MVP', name='Magnolia Vigilance Protection', color=0x8A8E9C},
 }
 
 end
@@ -6471,14 +6470,14 @@ local Config=require('src.core.Config')
 local R=require('src.core.Rules')
 local Http=require('src.utils.AsyncHttpRequest')
 local json=require('dkjson')
-local U={version='1.1.8',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
+local U={version='1.1.9',runtime=5,status='Menu update check pending',skins_status='Using bundled alliance skins',busy=false,skins_busy=false}
 local base='https://garries420.github.io/LeoneMenu/'
 local menu_url=base..'LeoneMenu.lua'
 local cache='config/Leone Menu/alliance-skins.html'
 local staged,completed,http_request
 local startup_checked,manual_queued,manual_skins=false,false,false
 local next_skins_at=0
-local initial={68,94,62,221,214,229,234,235,261,272,43,91,76,132,137,209,212,230,236,24,25,124,69,164,202,107,195,270,269,271,106}
+local initial={68,94,62,221,214,229,234,235,261,272,43,91,76,132,137,209,212,230,236,107,195,270,269,271,106}
 U.alliance={version=2,skins=initial}
 U.sha256=require('src.utils.UpdateFiles').sha256
 function U.is_alliance(id) for _,v in ipairs(U.alliance.skins) do if v==id then return true end end return false end
@@ -6700,7 +6699,7 @@ package.preload['src.main'] = function()
 __luapack_timestamp = __luapack_timestamp
 
 script_name("Leone Menu")
-script_version("1.1.8")
+script_version("1.1.9")
 script_authors("Kev", "Futurestunt", "Garry")
 
 local bit = require("bit")
@@ -10851,7 +10850,7 @@ local ready, mismatch = package_check.check({
     ["resource/Leone Menu/tshirt.png"] = "27393db39381a38dc1bae7d9bbeaf6d10ea1d93480162f9d3f52cb05fade7021",
 })
 if not ready then
-    package_check.recover("1.1.8", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
+    package_check.recover("1.1.9", "f466338d1a1733d28b303f42001cdc878ac57f80e6ed54d7db29883863bc7a08", mismatch)
     return
 end
 return require('src.main')
